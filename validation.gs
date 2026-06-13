@@ -6,9 +6,46 @@
  * @returns {Object} Validation result with ok and errors fields.
  */
 function validateEmployeeRecord(employee, config) {
+  var errors = [];
+  var pattern = config && config.EMP_ID_PATTERN ? config.EMP_ID_PATTERN : HRD.DEFAULT_CONFIG.EMP_ID_PATTERN;
+  var idRegex = RegExp(pattern);
+  var allowedStatuses = [
+    HRD.EMPLOYMENT_STATUSES.CONFIRMED,
+    HRD.EMPLOYMENT_STATUSES.UNDER_PROBATION,
+    HRD.EMPLOYMENT_STATUSES.INTERN
+  ];
+
+  if (!employee) {
+    return {
+      ok: false,
+      errors: ["Employee record is empty."],
+      config: config || {}
+    };
+  }
+
+  if (!employee.employeeId || !idRegex.test(String(employee.employeeId))) {
+    errors.push("Employee ID is missing or does not match the configured format.");
+  }
+
+  if (!employee.name) {
+    errors.push("Employee name is required.");
+  }
+
+  if (!employee.department) {
+    errors.push("Department is required.");
+  }
+
+  if (!employee.employmentStatus || allowedStatuses.indexOf(employee.employmentStatus) === -1) {
+    errors.push("Employment Status must be Confirmed, Under Probation, or Intern.");
+  }
+
+  if (!employee.doj) {
+    errors.push("Date of Joining is missing or invalid.");
+  }
+
   return {
-    ok: Boolean(employee),
-    errors: employee ? [] : ["Employee record is empty."],
+    ok: errors.length === 0,
+    errors: errors,
     config: config || {}
   };
 }
