@@ -177,6 +177,7 @@
       }
       rows.forEach(function(row) {
         var tr = document.createElement("tr");
+        applyRowStateClass(tr, row);
         row.forEach(function(value) {
           var td = document.createElement("td");
           td.textContent = value == null ? "" : String(value);
@@ -186,6 +187,18 @@
       });
       table.appendChild(tbody);
       target.appendChild(table);
+    }
+
+    function applyRowStateClass(rowElement, row) {
+      var text = row.map(function(value) {
+        return String(value || "").toLowerCase();
+      }).join(" ");
+
+      if (text.indexOf("overdue") !== -1) {
+        rowElement.className = "row-overdue";
+      } else if (text.indexOf("imminent") !== -1) {
+        rowElement.className = "row-imminent";
+      }
     }
 
     function configureFilters(rows) {

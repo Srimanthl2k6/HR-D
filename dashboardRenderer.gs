@@ -258,11 +258,29 @@ function applyDashboardFormatting_(sheet, rows) {
   try {
     sheet.setFrozenRows && sheet.setFrozenRows(1);
     sheet.autoResizeColumns && sheet.autoResizeColumns(1, rows[0].length);
+    styleDashboardBase_(sheet, rows);
     colorDashboardSectionRows_(sheet, rows);
     colorDashboardAlertRows_(sheet, rows);
   } catch (error) {
     logWarn("Dashboard formatting could not be applied: " + getSafeErrorMessage_(error));
   }
+}
+
+/**
+ * Applies baseline dashboard typography and dimensions.
+ *
+ * @param {Object} sheet Dashboard sheet.
+ * @param {Array[]} rows Rendered rows.
+ * @returns {void}
+ */
+function styleDashboardBase_(sheet, rows) {
+  var fullRange = sheet.getRange(1, 1, rows.length, rows[0].length);
+  fullRange.setFontFamily && fullRange.setFontFamily("Arial");
+  fullRange.setFontSize && fullRange.setFontSize(10);
+  fullRange.setVerticalAlignment && fullRange.setVerticalAlignment("middle");
+  fullRange.setWrap && fullRange.setWrap(true);
+  sheet.setColumnWidths && sheet.setColumnWidths(1, rows[0].length, 150);
+  sheet.setRowHeights && sheet.setRowHeights(1, rows.length, 28);
 }
 
 /**
@@ -277,7 +295,8 @@ function colorDashboardSectionRows_(sheet, rows) {
   rows.forEach(function(row, index) {
     if (sectionNames.indexOf(row[0]) !== -1) {
       var range = sheet.getRange(index + 1, 1, 1, row.length);
-      range.setBackground && range.setBackground("#dbeafe");
+      range.setBackground && range.setBackground(row[0] === "Techolution HR Automation Dashboard" ? "#0f172a" : "#e8f4f1");
+      range.setFontColor && range.setFontColor(row[0] === "Techolution HR Automation Dashboard" ? "#ffffff" : "#17212f");
       range.setFontWeight && range.setFontWeight("bold");
     }
   });

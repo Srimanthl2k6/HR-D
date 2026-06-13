@@ -26,8 +26,7 @@ function doGet(event) {
 
   return template
     .evaluate()
-    .setTitle(HRD.APP.NAME)
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .setTitle(HRD.APP.NAME);
 }
 
 /**
