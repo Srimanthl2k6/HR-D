@@ -1,0 +1,45 @@
+<script>
+  (function() {
+    var root = document.getElementById("dashboard-root");
+    var status = document.getElementById("status");
+
+    function setStatus(message) {
+      if (status) {
+        status.textContent = message;
+      }
+    }
+
+    function renderDashboard(model) {
+      if (!root || !model) {
+        setStatus("Dashboard data is unavailable.");
+        return;
+      }
+
+      document.getElementById("kpi-strip").textContent = JSON.stringify(model.kpis || {});
+      document.getElementById("alerts").textContent = "LWD: " + (model.lwdAlerts || []).length + ", Probation: " + (model.probationAlerts || []).length;
+      document.getElementById("department-breakdown").textContent = JSON.stringify(model.departmentBreakdown || []);
+      document.getElementById("attrition").textContent = JSON.stringify(model.attrition || {});
+      document.getElementById("risk-register").textContent = JSON.stringify(model.riskSummary || {});
+      document.getElementById("org-chart").textContent = JSON.stringify(model.orgChart || {});
+      document.getElementById("drill-down").textContent = JSON.stringify(model.drillDownRows || []);
+      setStatus("Dashboard skeleton loaded.");
+    }
+
+    function refreshDashboard() {
+      if (!window.google || !google.script || !google.script.run) {
+        renderDashboard(window.__INITIAL_DASHBOARD_PAYLOAD__);
+        return;
+      }
+
+      google.script.run
+        .withSuccessHandler(renderDashboard)
+        .withFailureHandler(function(error) {
+          setStatus(error && error.message ? error.message : "Unable to refresh dashboard data.");
+        })
+        .getDashboardData();
+    }
+
+    renderDashboard(window.__INITIAL_DASHBOARD_PAYLOAD__);
+    window.setInterval(refreshDashboard, 5000);
+  })();
+</script>

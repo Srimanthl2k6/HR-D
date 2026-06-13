@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Techolution HR Automation Dashboard</title>
+    <?!= include("Styles"); ?>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <h1>Techolution HR Automation Dashboard</h1>
+        <p id="status">Loading dashboard data...</p>
+      </header>
+
+      <section class="dashboard-grid" id="dashboard-root" aria-live="polite">
+        <article class="panel">
+          <h2>KPI Strip</h2>
+          <div id="kpi-strip"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Alerts</h2>
+          <div id="alerts"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Department Breakdown</h2>
+          <div id="department-breakdown"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Quarterly Attrition</h2>
+          <div id="attrition"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Risk Register</h2>
+          <div id="risk-register"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Org Chart</h2>
+          <div id="org-chart"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Drill-Down</h2>
+          <div id="drill-down"></div>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      window.__INITIAL_DASHBOARD_PAYLOAD__ = <?!= initialPayload ?>;
+    </script>
+    <?!= include("Client"); ?>
+  </body>
+</html>
