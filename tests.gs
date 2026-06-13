@@ -9,7 +9,11 @@ function runAllTests() {
     testLoadAllDataNormalizesEmployeesAndFlagsInvalidRows_,
     testLoadAllDataReadsRelatedSourceTabs_,
     testCurrentMonthColumnDiscovery_,
-    testFormulaSanitization_
+    testFormulaSanitization_,
+    testDashboardModelComputesKpisAndBreakdowns_,
+    testDashboardModelBuildsLwdAndProbationAlerts_,
+    testDashboardModelComputesCurrentQuarterAttritionFromLiveRows_,
+    testDashboardModelSummarizesRiskAndHealthScore_
   ];
   var results = createTestResults_();
 
@@ -171,6 +175,82 @@ function testFormulaSanitization_() {
 }
 
 /**
+ * Verifies dashboard KPI and department breakdown calculations.
+ *
+ * @returns {void}
+ */
+function testDashboardModelComputesKpisAndBreakdowns_() {
+  var model = buildDashboardModel(createPass4SourceData_(), getDefaultConfigValues());
+
+  assertEquals(4, model.kpis.totalHeadcount, "Total headcount should include all employees.");
+  assertEquals(3, model.kpis.regionHeadcount.India, "India headcount should be computed.");
+  assertEquals(1, model.kpis.regionHeadcount.US, "US headcount should be computed.");
+  assertEquals(1, model.kpis.statusHeadcount.Confirmed, "Confirmed headcount should be computed.");
+  assertEquals(1, model.kpis.statusHeadcount["Under Probation"], "Probation headcount should be computed.");
+  assertEquals(2, model.kpis.statusHeadcount.Intern, "Intern headcount should be computed.");
+  assertEquals(1, model.kpis.productivityFlagCount, "Productivity flags should use PRODUCTIVITY_TARGET.");
+  assertEquals(2, model.departmentBreakdown.length, "Department breakdown should group departments.");
+}
+
+/**
+ * Verifies LWD and probation alert calculations.
+ *
+ * @returns {void}
+ */
+function testDashboardModelBuildsLwdAndProbationAlerts_() {
+  var model = buildDashboardModel(createPass4SourceData_(), getDefaultConfigValues());
+
+  assertEquals(2, model.lwdAlerts.length, "Upcoming and recently passed intern LWD alerts should be visible.");
+  assertTrue(
+    model.lwdAlerts.some(function(alert) { return alert.employeeId === "INT-UPCOMING"; }),
+    "Intern with LWD in threshold should be in LWD alerts."
+  );
+  assertTrue(
+    model.lwdAlerts.some(function(alert) { return alert.employeeId === "INT-PASSED"; }),
+    "Intern with recently passed LWD should be in LWD alerts."
+  );
+  assertEquals(1, model.probationAlerts.length, "One probationer should be confirmation-imminent.");
+  assertEquals("PROB-001", model.probationAlerts[0].employeeId, "Probation alert should target the confirmation-imminent employee.");
+}
+
+/**
+ * Verifies attrition uses current live offboarded rows.
+ *
+ * @returns {void}
+ */
+function testDashboardModelComputesCurrentQuarterAttritionFromLiveRows_() {
+  var source = createPass4SourceData_();
+  var modelWithExit = buildDashboardModel(source, getDefaultConfigValues());
+  var sourceAfterDeletion = createPass4SourceData_();
+  sourceAfterDeletion.offboarded = [];
+  var modelAfterDeletion = buildDashboardModel(sourceAfterDeletion, getDefaultConfigValues());
+
+  assertEquals(1, modelWithExit.attrition.exits, "Current-quarter exits should be counted.");
+  assertTrue(modelWithExit.attrition.rate > 0, "Attrition rate should be positive when current-quarter exits exist.");
+  assertEquals(0, modelAfterDeletion.attrition.exits, "Deleting an offboarded row should change live exit count.");
+  assertEquals(0, modelAfterDeletion.attrition.rate, "Deleting all current-quarter offboarded rows should reset attrition rate.");
+}
+
+/**
+ * Verifies risk summaries and HR Health Score are audit-friendly.
+ *
+ * @returns {void}
+ */
+function testDashboardModelSummarizesRiskAndHealthScore_() {
+  var model = buildDashboardModel(createPass4SourceData_(), getDefaultConfigValues());
+
+  assertEquals(1, model.kpis.activeRiskCount, "Only active risk items should count as active.");
+  assertEquals(1, model.riskSummary.byCategory.Delivery, "Risk summary should group by category.");
+  assertEquals(1, model.riskSummary.byLevel.High, "Risk summary should group by level.");
+  assertEquals(1, model.riskSummary.byStatus.Open, "Risk summary should group by status.");
+  assertTrue(model.healthScore.score >= 0 && model.healthScore.score <= 100, "Health Score should stay within 0-100.");
+  assertTrue(typeof model.healthScore.components.attrition.value === "number", "Attrition component should expose its value.");
+  assertTrue(typeof model.healthScore.components.openAlerts.value === "number", "Open-alert component should expose its value.");
+  assertTrue(typeof model.healthScore.components.activeRisks.value === "number", "Risk component should expose its value.");
+  assertTrue(typeof model.healthScore.components.productivityAverage.value === "number", "Productivity component should expose its value.");
+}
+
+/**
  * Creates representative source-table data for Pass 3 tests.
  *
  * @returns {Object} Source tables keyed by tab name.
@@ -209,6 +289,110 @@ function createPass3TestTables_() {
       ["OLD-001", "Past Employee", "Engineering", "Developer", lastWorkingDay, "Resigned", "Q2"]
     ]
   };
+}
+
+/**
+ * Creates normalized source data for Pass 4 business-logic tests.
+ *
+ * @returns {Object} Normalized source data.
+ */
+function createPass4SourceData_() {
+  return {
+    employees: [
+      createTestEmployee_("PROB-001", "Priya Menon", "India", "Engineering", HRD.EMPLOYMENT_STATUSES.UNDER_PROBATION, createRelativeDayDate_(-155), null, 92),
+      createTestEmployee_("INT-UPCOMING", "Dev Shah", "India", "Engineering", HRD.EMPLOYMENT_STATUSES.INTERN, createRelativeDayDate_(-40), createRelativeDayDate_(20), 78),
+      createTestEmployee_("INT-PASSED", "Ira Rao", "India", "People", HRD.EMPLOYMENT_STATUSES.INTERN, createRelativeDayDate_(-80), createRelativeDayDate_(-5), 88),
+      createTestEmployee_("CONF-001", "Noah Smith", "US", "People", HRD.EMPLOYMENT_STATUSES.CONFIRMED, createRelativeDayDate_(-400), null, 95)
+    ],
+    risks: [
+      {
+        employeeId: "PROB-001",
+        name: "Priya Menon",
+        riskCategory: "Delivery",
+        riskLevel: "High",
+        description: "Project dependency",
+        dateRaised: createRelativeDayDate_(-3),
+        status: "Open"
+      },
+      {
+        employeeId: "CONF-001",
+        name: "Noah Smith",
+        riskCategory: "Engagement",
+        riskLevel: "Low",
+        description: "Resolved item",
+        dateRaised: createRelativeDayDate_(-12),
+        status: "Closed"
+      }
+    ],
+    offboarded: [
+      {
+        employeeId: "OLD-001",
+        name: "Past Employee",
+        department: "Engineering",
+        designation: "Developer",
+        lastWorkingDay: createRelativeDayDate_(-7),
+        reason: "Resigned",
+        exitQuarter: createCurrentQuarterLabelForTest_()
+      }
+    ],
+    finance: [],
+    rmData: [],
+    schemaWarnings: [],
+    validationWarnings: []
+  };
+}
+
+/**
+ * Creates a normalized employee for tests.
+ *
+ * @param {string} employeeId Employee ID.
+ * @param {string} name Employee name.
+ * @param {string} region Region.
+ * @param {string} department Department.
+ * @param {string} status Employment status.
+ * @param {Date} doj Date of joining.
+ * @param {Date|null} lwd Last working day.
+ * @param {number} productivityAverage Productivity average.
+ * @returns {EmployeeRecord} Employee record.
+ */
+function createTestEmployee_(employeeId, name, region, department, status, doj, lwd, productivityAverage) {
+  return {
+    employeeId: employeeId,
+    name: name,
+    region: region,
+    department: department,
+    designation: "Analyst",
+    reportingManager: "Mina Shah",
+    skillset: "Automation",
+    doj: doj,
+    employmentStatus: status,
+    lwd: lwd,
+    allocationPercent: null,
+    ctc: null,
+    productivityAverage: productivityAverage,
+    rmMonthValue: null
+  };
+}
+
+/**
+ * Creates a date offset from the current day.
+ *
+ * @param {number} dayOffset Day offset from now.
+ * @returns {Date} Relative date.
+ */
+function createRelativeDayDate_(dayOffset) {
+  var now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset);
+}
+
+/**
+ * Creates the current quarter label for test fixture data.
+ *
+ * @returns {string} Current quarter label.
+ */
+function createCurrentQuarterLabelForTest_() {
+  var now = new Date();
+  return "Q" + (Math.floor(now.getMonth() / 3) + 1);
 }
 
 /**
