@@ -55,13 +55,13 @@ function runFullPipeline(triggerSource) {
 
     renderDashboard(model);
     renderOrgChart(model);
-    renderDrillDown(model, getDefaultDrillDownFilters());
+    renderDrillDown(model, readDrillDownFilters_() || getDefaultDrillDownFilters());
 
     result.model = model;
     result.ok = true;
     result.durationMs = Date.now() - startedAt;
     appendChangelog(result);
-    logInfo("Pipeline skeleton completed for trigger source: " + source);
+    logInfo("Pipeline completed for trigger source: " + source);
   } catch (error) {
     result.ok = false;
     result.errors.push(getSafeErrorMessage_(error));
@@ -79,8 +79,17 @@ function runFullPipeline(triggerSource) {
  * @returns {PipelineResult|Object} Pipeline or workflow result.
  */
 function handleInstallableEdit(event) {
-  if (event && event.value && isWorkflowAction(event.value)) {
+  var route = classifyEditEvent_(event);
+
+  if (route === "workflowAction") {
     return handleWorkflowAction(event);
+  }
+
+  if (route === "drillDownFilter") {
+    var config = loadConfig();
+    var data = loadAllData(config);
+    var model = buildDashboardModel(data, config);
+    return renderDrillDown(model, readDrillDownFilters_());
   }
 
   return runFullPipeline(HRD.TRIGGER_SOURCES.ON_EDIT);
@@ -317,4 +326,43 @@ function allowDrillDownFilterEdits_(sheet) {
   } catch (error) {
     logWarn("Unable to configure DrillDown editable filter cells: " + getSafeErrorMessage_(error));
   }
+}
+
+/**
+ * Classifies an edit event for routing.
+ *
+ * @param {Object} event Apps Script edit event.
+ * @returns {string} Route name.
+ */
+function classifyEditEvent_(event) {
+  if (event && event.value && isWorkflowAction(event.value)) {
+    return "workflowAction";
+  }
+
+  var range = event && event.range ? event.range : null;
+  var sheet = range && range.getSheet ? range.getSheet() : null;
+  var sheetName = sheet && sheet.getName ? sheet.getName() : "";
+  var a1 = range && range.getA1Notation ? range.getA1Notation() : "";
+
+  if (sheetName === HRD.TABS.DRILL_DOWN && isDrillDownFilterCell_(a1)) {
+    return "drillDownFilter";
+  }
+
+  if (getSourceTabNames().indexOf(sheetName) !== -1) {
+    return "sourceData";
+  }
+
+  return "other";
+}
+
+/**
+ * Returns true when an A1 cell is a DrillDown filter cell.
+ *
+ * @param {string} a1 A1 notation.
+ * @returns {boolean} True when the cell is a filter cell.
+ */
+function isDrillDownFilterCell_(a1) {
+  return Object.keys(HRD.DRILL_DOWN.FILTER_CELLS).some(function(key) {
+    return HRD.DRILL_DOWN.FILTER_CELLS[key] === a1;
+  });
 }

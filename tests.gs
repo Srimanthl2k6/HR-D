@@ -13,7 +13,12 @@ function runAllTests() {
     testDashboardModelComputesKpisAndBreakdowns_,
     testDashboardModelBuildsLwdAndProbationAlerts_,
     testDashboardModelComputesCurrentQuarterAttritionFromLiveRows_,
-    testDashboardModelSummarizesRiskAndHealthScore_
+    testDashboardModelSummarizesRiskAndHealthScore_,
+    testDashboardRendererSurfacesValidationWarnings_,
+    testDashboardRendererBuildsAllRequiredSections_,
+    testOrgChartRendererBuildsManagerRows_,
+    testDrillDownRendererBuildsFilteredRows_,
+    testEditRoutingDistinguishesDrillDownAndSourceEdits_
   ];
   var results = createTestResults_();
 
@@ -251,6 +256,102 @@ function testDashboardModelSummarizesRiskAndHealthScore_() {
 }
 
 /**
+ * Verifies validation warnings are visible in Dashboard output.
+ *
+ * @returns {void}
+ */
+function testDashboardRendererSurfacesValidationWarnings_() {
+  var source = createPass4SourceData_();
+  source.validationWarnings = ["India Employee Database row 3: Employment Status must be Confirmed, Under Probation, or Intern."];
+  var rows = buildDashboardRows_(buildDashboardModel(source, getDefaultConfigValues()));
+  var flatText = JSON.stringify(rows);
+
+  assertTrue(flatText.indexOf("Data Quality Warnings") !== -1, "Dashboard rows should include a data quality warning section.");
+  assertTrue(flatText.indexOf("Employment Status must be Confirmed") !== -1, "Dashboard rows should surface plain-English validation messages.");
+}
+
+/**
+ * Verifies Dashboard render rows contain every required section.
+ *
+ * @returns {void}
+ */
+function testDashboardRendererBuildsAllRequiredSections_() {
+  var rows = buildDashboardRows_(buildDashboardModel(createPass4SourceData_(), getDefaultConfigValues()));
+  var flatText = JSON.stringify(rows);
+
+  getDashboardSectionNames().forEach(function(sectionName) {
+    assertTrue(flatText.indexOf(sectionName) !== -1, "Dashboard rows should include section: " + sectionName);
+  });
+  assertTrue(flatText.indexOf("PROB-001") !== -1, "Dashboard rows should include probation alert employee IDs.");
+  assertTrue(flatText.indexOf("INT-UPCOMING") !== -1, "Dashboard rows should include LWD alert employee IDs.");
+}
+
+/**
+ * Verifies OrgChart rows reflect reporting-manager relationships.
+ *
+ * @returns {void}
+ */
+function testOrgChartRendererBuildsManagerRows_() {
+  var model = buildDashboardModel(createPass4SourceData_(), getDefaultConfigValues());
+  var rows = buildOrgChartTableRows_(model);
+
+  assertEquals("Reporting Manager", rows[0][0], "OrgChart table should start with headers.");
+  assertTrue(
+    rows.some(function(row) {
+      return row[0] === "Mina Shah" && row[2] === "PROB-001";
+    }),
+    "OrgChart rows should include manager-to-report relationships."
+  );
+}
+
+/**
+ * Verifies DrillDown rows apply filter values.
+ *
+ * @returns {void}
+ */
+function testDrillDownRendererBuildsFilteredRows_() {
+  var model = buildDashboardModel(createPass4SourceData_(), getDefaultConfigValues());
+  var rows = buildDrillDownRows_(model, {
+    region: "India",
+    department: "Engineering",
+    reportingManager: "All",
+    employmentStatus: "All"
+  });
+
+  assertEquals("Emp ID", rows[6][0], "DrillDown table should include an employee header row after filters.");
+  assertTrue(
+    rows.some(function(row) {
+      return row[0] === "PROB-001";
+    }),
+    "Filtered DrillDown rows should include matching employees."
+  );
+  assertTrue(
+    !rows.some(function(row) {
+      return row[0] === "CONF-001";
+    }),
+    "Filtered DrillDown rows should exclude non-matching employees."
+  );
+}
+
+/**
+ * Verifies edit routing distinguishes DrillDown filters and source tabs.
+ *
+ * @returns {void}
+ */
+function testEditRoutingDistinguishesDrillDownAndSourceEdits_() {
+  assertEquals(
+    "drillDownFilter",
+    classifyEditEvent_({ range: createTestRange_(HRD.TABS.DRILL_DOWN, "B2") }),
+    "DrillDown filter edits should route to DrillDown refresh."
+  );
+  assertEquals(
+    "sourceData",
+    classifyEditEvent_({ range: createTestRange_(HRD.TABS.INDIA_EMPLOYEES, "A2") }),
+    "Source tab edits should route to the full pipeline."
+  );
+}
+
+/**
  * Creates representative source-table data for Pass 3 tests.
  *
  * @returns {Object} Source tables keyed by tab name.
@@ -393,6 +494,28 @@ function createRelativeDayDate_(dayOffset) {
 function createCurrentQuarterLabelForTest_() {
   var now = new Date();
   return "Q" + (Math.floor(now.getMonth() / 3) + 1);
+}
+
+/**
+ * Creates a minimal Apps Script range test double.
+ *
+ * @param {string} sheetName Sheet name.
+ * @param {string} a1 A1 notation.
+ * @returns {Object} Range-like object.
+ */
+function createTestRange_(sheetName, a1) {
+  return {
+    getA1Notation: function() {
+      return a1;
+    },
+    getSheet: function() {
+      return {
+        getName: function() {
+          return sheetName;
+        }
+      };
+    }
+  };
 }
 
 /**

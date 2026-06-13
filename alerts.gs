@@ -20,6 +20,10 @@ function buildDashboardModel(data, config) {
       managers: buildOrgChartRows(source.employees || [])
     },
     drillDownRows: source.employees || [],
+    dataQuality: {
+      schemaWarnings: source.schemaWarnings || [],
+      validationWarnings: source.validationWarnings || []
+    },
     healthScore: buildHealthScore_(source, runtimeConfig)
   };
 }
