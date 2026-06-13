@@ -23,6 +23,7 @@ function setupWorkbook() {
   });
 
   seedSourceHeaders_(spreadsheet);
+  ensureWorkflowColumnsForSourceTabs_(spreadsheet);
   seedConfigSheet_(spreadsheet);
   initializeOperationalSheets_(spreadsheet);
   initializeDrillDownSheet_(spreadsheet);
@@ -46,11 +47,27 @@ function setupWorkbook() {
 function runFullPipeline(triggerSource) {
   var startedAt = Date.now();
   var source = triggerSource || HRD.TRIGGER_SOURCES.MANUAL;
-  var result = createPipelineResult_(source, startedAt);
+
+  return runPipelineWithData_(null, null, source, startedAt);
+}
+
+/**
+ * Runs the HRD pipeline with optional injected source data.
+ *
+ * @param {Object|null} injectedData Optional normalized source data.
+ * @param {Object|null} injectedConfig Optional runtime configuration.
+ * @param {string=} triggerSource Source that initiated the run.
+ * @param {number=} startedAt Optional millisecond timestamp.
+ * @returns {PipelineResult} Pipeline result.
+ */
+function runPipelineWithData_(injectedData, injectedConfig, triggerSource, startedAt) {
+  var startTime = startedAt || Date.now();
+  var source = triggerSource || HRD.TRIGGER_SOURCES.MANUAL;
+  var result = createPipelineResult_(source, startTime);
 
   try {
-    var config = loadConfig();
-    var data = loadAllData(config);
+    var config = injectedConfig || loadConfig();
+    var data = injectedData || loadAllData(config);
     var model = buildDashboardModel(data, config);
 
     renderDashboard(model);
@@ -59,13 +76,18 @@ function runFullPipeline(triggerSource) {
 
     result.model = model;
     result.ok = true;
-    result.durationMs = Date.now() - startedAt;
+    result.durationMs = Date.now() - startTime;
+    var emailResult = sendAlertDigestIfNeeded(evaluateAlerts(data, config), config);
+    if (emailResult.warning) {
+      result.warnings.push(emailResult.warning);
+    }
+    checkSelfMonitoring_(result, config);
     appendChangelog(result);
     logInfo("Pipeline completed for trigger source: " + source);
   } catch (error) {
     result.ok = false;
     result.errors.push(getSafeErrorMessage_(error));
-    result.durationMs = Date.now() - startedAt;
+    result.durationMs = Date.now() - startTime;
     logError(result.errors.join("; "));
   }
 
@@ -112,6 +134,69 @@ function handleInstallableChange(event) {
  */
 function runDailyPipeline() {
   return runFullPipeline(HRD.TRIGGER_SOURCES.TIME_BASED);
+}
+
+/**
+ * Installs project triggers for edit, change, and daily pipeline execution.
+ *
+ * @param {Object=} config Runtime configuration.
+ * @returns {Object} Trigger installation summary.
+ */
+function installTriggers(config) {
+  var runtimeConfig = config || loadConfig();
+  var result = { installed: [], unavailable: false };
+
+  if (typeof ScriptApp === "undefined" || !ScriptApp.newTrigger) {
+    result.unavailable = true;
+    logWarn("ScriptApp is unavailable. Triggers must be installed inside Apps Script.");
+    return result;
+  }
+
+  removeProjectTriggers();
+
+  result.installed.push(
+    ScriptApp.newTrigger("handleInstallableEdit")
+      .forSpreadsheet(getActiveSpreadsheet_())
+      .onEdit()
+      .create()
+  );
+  result.installed.push(
+    ScriptApp.newTrigger("handleInstallableChange")
+      .forSpreadsheet(getActiveSpreadsheet_())
+      .onChange()
+      .create()
+  );
+  result.installed.push(
+    ScriptApp.newTrigger("runDailyPipeline")
+      .timeBased()
+      .everyDays(1)
+      .atHour(Number(runtimeConfig.PIPELINE_TRIGGER_HOUR))
+      .create()
+  );
+
+  logInfo("Installed HRD triggers: onEdit, onChange, and daily pipeline.");
+  return result;
+}
+
+/**
+ * Removes all project triggers.
+ *
+ * @returns {Object} Trigger removal summary.
+ */
+function removeProjectTriggers() {
+  var result = { removed: 0, unavailable: false };
+
+  if (typeof ScriptApp === "undefined" || !ScriptApp.getProjectTriggers) {
+    result.unavailable = true;
+    return result;
+  }
+
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    ScriptApp.deleteTrigger(trigger);
+    result.removed += 1;
+  });
+
+  return result;
 }
 
 /**
@@ -365,4 +450,107 @@ function isDrillDownFilterCell_(a1) {
   return Object.keys(HRD.DRILL_DOWN.FILTER_CELLS).some(function(key) {
     return HRD.DRILL_DOWN.FILTER_CELLS[key] === a1;
   });
+}
+
+/**
+ * Checks self-monitoring conditions and emits admin alerts when needed.
+ *
+ * @param {PipelineResult} result Pipeline result.
+ * @param {Object} config Runtime configuration.
+ * @returns {Object[]} Self-monitoring findings.
+ */
+function checkSelfMonitoring_(result, config) {
+  var findings = [];
+  var lastRunDate = getLastChangelogRunDate_();
+  var missedRun = detectMissedDailyRun_(lastRunDate, new Date());
+
+  if (missedRun.missed) {
+    findings.push(missedRun);
+    result.warnings.push(missedRun.message);
+    sendAdminAlert_("Missed Daily Run", missedRun.message, config);
+  }
+
+  if (result.model && result.model.dataQuality) {
+    var schemaWarnings = result.model.dataQuality.schemaWarnings || [];
+    if (schemaWarnings.length) {
+      var schemaMessage = "Schema drift detected: " + schemaWarnings.join("; ");
+      findings.push({ type: "schemaDrift", message: schemaMessage });
+      result.warnings.push(schemaMessage);
+      sendAdminAlert_("Schema Drift", schemaMessage, config);
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Detects whether the daily pipeline appears to have missed a run.
+ *
+ * @param {Date|null} lastRunDate Last successful run date.
+ * @param {Date} now Current date.
+ * @returns {Object} Detection result.
+ */
+function detectMissedDailyRun_(lastRunDate, now) {
+  if (!lastRunDate) {
+    return { missed: false, message: "No previous daily run was found yet." };
+  }
+
+  var elapsedMs = now.getTime() - lastRunDate.getTime();
+  var missed = elapsedMs > 36 * 60 * 60 * 1000;
+
+  return {
+    missed: missed,
+    message: missed
+      ? "Daily pipeline appears to have missed a scheduled run."
+      : "Daily pipeline is within the expected run window."
+  };
+}
+
+/**
+ * Returns the latest changelog run date when available.
+ *
+ * @returns {Date|null} Last changelog timestamp.
+ */
+function getLastChangelogRunDate_() {
+  var spreadsheet = getActiveSpreadsheet_();
+  if (!spreadsheet) {
+    return null;
+  }
+
+  var sheet = getSheetByName_(spreadsheet, HRD.TABS.CHANGELOG);
+  var values = getSheetValues_(sheet);
+  if (values.length <= 1) {
+    return null;
+  }
+
+  var lastRow = values[values.length - 1];
+  var timestamp = lastRow[1];
+  return timestamp instanceof Date ? timestamp : normalizeDateValue_(timestamp);
+}
+
+/**
+ * Sends a self-monitoring admin alert.
+ *
+ * @param {string} failureType Failure type.
+ * @param {string} message Failure message.
+ * @param {Object} config Runtime configuration.
+ * @returns {Object} Send result.
+ */
+function sendAdminAlert_(failureType, message, config) {
+  if (typeof MailApp === "undefined" || !MailApp.sendEmail) {
+    return { sent: false, reason: "MailApp unavailable" };
+  }
+
+  try {
+    MailApp.sendEmail({
+      to: config.ADMIN_ALERT_EMAIL,
+      subject: "HRD System Alert - " + failureType,
+      body: message
+    });
+    logInfo("Sent admin alert for " + failureType + ".");
+    return { sent: true };
+  } catch (error) {
+    logError("Admin alert failed: " + getSafeErrorMessage_(error));
+    return { sent: false, reason: getSafeErrorMessage_(error) };
+  }
 }

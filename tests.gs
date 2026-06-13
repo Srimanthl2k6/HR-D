@@ -18,7 +18,12 @@ function runAllTests() {
     testDashboardRendererBuildsAllRequiredSections_,
     testOrgChartRendererBuildsManagerRows_,
     testDrillDownRendererBuildsFilteredRows_,
-    testEditRoutingDistinguishesDrillDownAndSourceEdits_
+    testEditRoutingDistinguishesDrillDownAndSourceEdits_,
+    testTriggerInstallAndRemoveUsesConfiguredHour_,
+    testAlertDigestSendsOnlyWhenActive_,
+    testSelfMonitoringDetectsMissedDailyRun_,
+    testWorkflowActionStampsRowAndSkipsDuplicate_,
+    testPipelineContinuesWhenAlertEmailFails_
   ];
   var results = createTestResults_();
 
@@ -352,6 +357,128 @@ function testEditRoutingDistinguishesDrillDownAndSourceEdits_() {
 }
 
 /**
+ * Verifies trigger installation and removal use ScriptApp correctly.
+ *
+ * @returns {void}
+ */
+function testTriggerInstallAndRemoveUsesConfiguredHour_() {
+  var originalScriptApp = typeof ScriptApp === "undefined" ? undefined : ScriptApp;
+  var mockScriptApp = createMockScriptApp_();
+
+  ScriptApp = mockScriptApp;
+  try {
+    var installResult = installTriggers({ PIPELINE_TRIGGER_HOUR: 7 });
+    assertEquals(3, installResult.installed.length, "Three installable triggers should be created.");
+    assertTrue(
+      mockScriptApp.created.some(function(trigger) {
+        return trigger.handler === "runDailyPipeline" && trigger.hour === 7;
+      }),
+      "Daily trigger should use configured hour."
+    );
+
+    var removeResult = removeProjectTriggers();
+    assertEquals(3, removeResult.removed, "All existing project triggers should be removed.");
+  } finally {
+    restoreGlobal_("ScriptApp", originalScriptApp);
+  }
+}
+
+/**
+ * Verifies alert digest email sends only for active alerts.
+ *
+ * @returns {void}
+ */
+function testAlertDigestSendsOnlyWhenActive_() {
+  var originalMailApp = typeof MailApp === "undefined" ? undefined : MailApp;
+  var mockMailApp = createMockMailApp_(false);
+  var alertModel = evaluateAlerts(createPass4SourceData_(), getDefaultConfigValues());
+
+  MailApp = mockMailApp;
+  try {
+    var sent = sendAlertDigestIfNeeded(alertModel, getDefaultConfigValues());
+    var notSent = sendAlertDigestIfNeeded({ lwdAlerts: [], probationAlerts: [], allAlerts: [] }, getDefaultConfigValues());
+
+    assertTrue(sent.sent, "Active alerts should send an email digest.");
+    assertEquals(false, notSent.sent, "No digest should be sent when there are no active alerts.");
+    assertEquals(1, mockMailApp.sent.length, "Only one digest email should be sent.");
+    assertTrue(mockMailApp.sent[0].body.indexOf("PROB-001") !== -1, "Digest should include alert employee IDs.");
+    assertTrue(mockMailApp.sent[0].body.indexOf("CTC") === -1, "Digest should not include compensation labels.");
+  } finally {
+    restoreGlobal_("MailApp", originalMailApp);
+  }
+}
+
+/**
+ * Verifies self-monitoring detects missed daily runs.
+ *
+ * @returns {void}
+ */
+function testSelfMonitoringDetectsMissedDailyRun_() {
+  var now = new Date();
+  var oldRun = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2);
+  var status = detectMissedDailyRun_(oldRun, now);
+
+  assertTrue(status.missed, "A run older than one day should be detected as missed.");
+  assertTrue(status.message.indexOf("missed") !== -1, "Missed-run message should be human-readable.");
+}
+
+/**
+ * Verifies workflow actions stamp rows and skip duplicate execution.
+ *
+ * @returns {void}
+ */
+function testWorkflowActionStampsRowAndSkipsDuplicate_() {
+  var originalMailApp = typeof MailApp === "undefined" ? undefined : MailApp;
+  var mockMailApp = createMockMailApp_(false);
+  var sheet = createWorkflowMockSheet_();
+  var firstEvent = {
+    value: HRD.WORKFLOW_ACTIONS.START_OFFBOARDING,
+    range: createWorkflowMockRange_(sheet, 2, 10)
+  };
+
+  MailApp = mockMailApp;
+  try {
+    var first = handleWorkflowAction(firstEvent);
+    var duplicate = handleWorkflowAction(firstEvent);
+
+    assertTrue(first.executed, "First workflow action should execute.");
+    assertEquals(false, duplicate.executed, "Duplicate workflow action should be skipped.");
+    assertEquals(1, mockMailApp.sent.length, "Duplicate workflow action should not resend email.");
+    assertTrue(String(sheet.values[1][10] || "").length > 0, "Workflow execution timestamp should be stamped.");
+    assertTrue(String(sheet.values[1][11] || "").indexOf("Executed") !== -1, "Workflow result should be stamped.");
+  } finally {
+    restoreGlobal_("MailApp", originalMailApp);
+  }
+}
+
+/**
+ * Verifies pipeline succeeds even when alert email dispatch fails.
+ *
+ * @returns {void}
+ */
+function testPipelineContinuesWhenAlertEmailFails_() {
+  var originalMailApp = typeof MailApp === "undefined" ? undefined : MailApp;
+  var mockMailApp = createMockMailApp_(true);
+  var source = createPass4SourceData_();
+
+  MailApp = mockMailApp;
+  try {
+    var result = runPipelineWithData_(source, getDefaultConfigValues(), HRD.TRIGGER_SOURCES.TEST);
+
+    assertTrue(result.ok, "Pipeline should remain successful when email digest fails.");
+    assertTrue(
+      result.warnings.some(function(warning) {
+        return warning.indexOf("Email digest failed") !== -1;
+      }),
+      "Pipeline should record an email failure warning."
+    );
+    assertTrue(result.model.kpis.totalHeadcount > 0, "Dashboard model should still be built.");
+  } finally {
+    restoreGlobal_("MailApp", originalMailApp);
+  }
+}
+
+/**
  * Creates representative source-table data for Pass 3 tests.
  *
  * @returns {Object} Source tables keyed by tab name.
@@ -516,6 +643,200 @@ function createTestRange_(sheetName, a1) {
       };
     }
   };
+}
+
+/**
+ * Creates a mock ScriptApp object.
+ *
+ * @returns {Object} ScriptApp test double.
+ */
+function createMockScriptApp_() {
+  var scriptApp = {
+    created: [],
+    deleted: [],
+    triggers: [],
+    EventType: {
+      ON_EDIT: "ON_EDIT",
+      ON_CHANGE: "ON_CHANGE"
+    },
+    TriggerSource: {
+      SPREADSHEETS: "SPREADSHEETS"
+    },
+    newTrigger: function(handler) {
+      var trigger = { handler: handler };
+      var builder = {
+        forSpreadsheet: function() {
+          trigger.forSpreadsheet = true;
+          return builder;
+        },
+        onEdit: function() {
+          trigger.type = "onEdit";
+          return builder;
+        },
+        onChange: function() {
+          trigger.type = "onChange";
+          return builder;
+        },
+        timeBased: function() {
+          trigger.type = "timeBased";
+          return builder;
+        },
+        everyDays: function(days) {
+          trigger.everyDays = days;
+          return builder;
+        },
+        atHour: function(hour) {
+          trigger.hour = hour;
+          return builder;
+        },
+        create: function() {
+          scriptApp.created.push(trigger);
+          scriptApp.triggers.push(trigger);
+          return trigger;
+        }
+      };
+      return builder;
+    },
+    getProjectTriggers: function() {
+      return scriptApp.triggers.slice();
+    },
+    deleteTrigger: function(trigger) {
+      scriptApp.deleted.push(trigger);
+      scriptApp.triggers = scriptApp.triggers.filter(function(candidate) {
+        return candidate !== trigger;
+      });
+    }
+  };
+
+  return scriptApp;
+}
+
+/**
+ * Creates a mock MailApp object.
+ *
+ * @param {boolean} shouldThrow Whether sendEmail should throw.
+ * @returns {Object} MailApp test double.
+ */
+function createMockMailApp_(shouldThrow) {
+  return {
+    sent: [],
+    sendEmail: function(message) {
+      if (shouldThrow) {
+        throw new Error("Mail quota exceeded");
+      }
+      this.sent.push(message);
+      return true;
+    }
+  };
+}
+
+/**
+ * Restores or removes a global value.
+ *
+ * @param {string} name Global name.
+ * @param {*} original Original value.
+ * @returns {void}
+ */
+function restoreGlobal_(name, original) {
+  if (typeof original === "undefined") {
+    try {
+      delete globalThis[name];
+    } catch (error) {
+      globalThis[name] = undefined;
+    }
+    return;
+  }
+
+  globalThis[name] = original;
+}
+
+/**
+ * Creates a workflow sheet test double.
+ *
+ * @returns {Object} Sheet-like object.
+ */
+function createWorkflowMockSheet_() {
+  return {
+    name: HRD.TABS.INDIA_EMPLOYEES,
+    values: [
+      [
+        "Emp ID",
+        "Name",
+        "Department",
+        "Designation",
+        "Reporting Manager",
+        "Skillset",
+        "Date of Joining (DOJ)",
+        "Employment Status",
+        "Last Working Day (LWD for interns)",
+        "Workflow Action",
+        "Workflow Executed At",
+        "Workflow Last Result"
+      ],
+      [
+        "IND-777",
+        "Workflow User",
+        "People",
+        "Analyst",
+        "Mina Shah",
+        "Automation",
+        createRelativeDayDate_(-30),
+        HRD.EMPLOYMENT_STATUSES.CONFIRMED,
+        "",
+        HRD.WORKFLOW_ACTIONS.START_OFFBOARDING,
+        "",
+        ""
+      ]
+    ],
+    getName: function() {
+      return this.name;
+    },
+    getDataRange: function() {
+      var self = this;
+      return {
+        getValues: function() {
+          return self.values.map(function(row) {
+            return row.slice();
+          });
+        }
+      };
+    },
+    getRange: function(row, column) {
+      var self = this;
+      return {
+        setValue: function(value) {
+          self.values[row - 1][column - 1] = value;
+        },
+        getValue: function() {
+          return self.values[row - 1][column - 1];
+        },
+        getSheet: function() {
+          return self;
+        },
+        getRow: function() {
+          return row;
+        },
+        getColumn: function() {
+          return column;
+        },
+        getA1Notation: function() {
+          return "J" + row;
+        }
+      };
+    }
+  };
+}
+
+/**
+ * Creates a workflow range test double.
+ *
+ * @param {Object} sheet Sheet-like object.
+ * @param {number} row One-based row.
+ * @param {number} column One-based column.
+ * @returns {Object} Range-like object.
+ */
+function createWorkflowMockRange_(sheet, row, column) {
+  return sheet.getRange(row, column);
 }
 
 /**

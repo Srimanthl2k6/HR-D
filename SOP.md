@@ -18,7 +18,7 @@ Pass 9 completes this section after triggers and Web App polling are implemented
 
 ## Trigger Installation
 
-Pass 9 completes this section after trigger installation functions are implemented and verified.
+Admins run `installTriggers()` once after deployment to create installable `onEdit`, `onChange`, and daily time-based triggers. Use `removeProjectTriggers()` before reinstalling triggers during maintenance.
 
 ## Web App Deployment
 
@@ -27,6 +27,8 @@ Pass 9 completes this section after HtmlService deployment behavior is implement
 ## Troubleshooting
 
 Review `Logs` for timestamped INFO, WARN, and ERROR messages. Review `Changelog` for one row per full pipeline run.
+
+If HR alert email delivery fails, the pipeline continues rendering Sheet surfaces and records a warning. System self-monitoring alerts are sent to `ADMIN_ALERT_EMAIL` when MailApp failures, missed daily runs, or schema drift are detected.
 
 ## Change Management
 

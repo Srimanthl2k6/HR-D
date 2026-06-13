@@ -57,8 +57,118 @@ function buildAlertDigestModel(alertModel) {
   return {
     hasActiveAlerts: alerts.allAlerts.length > 0,
     lwdAlerts: alerts.lwdAlerts,
-    probationAlerts: alerts.probationAlerts
+    probationAlerts: alerts.probationAlerts,
+    subject: "Techolution HR Alerts - " + formatDateForMessage_(new Date()),
+    body: buildAlertDigestBody_(alerts)
   };
+}
+
+/**
+ * Sends the HR alert digest if active alerts exist.
+ *
+ * @param {Object} alertModel Alert model returned by evaluateAlerts.
+ * @param {Object} config Runtime configuration.
+ * @returns {Object} Send result.
+ */
+function sendAlertDigestIfNeeded(alertModel, config) {
+  var digest = buildAlertDigestModel(alertModel);
+
+  if (!digest.hasActiveAlerts) {
+    return { sent: false, reason: "No active alerts." };
+  }
+
+  if (typeof MailApp === "undefined" || !MailApp.sendEmail) {
+    return { sent: false, warning: "Email digest failed: MailApp is unavailable." };
+  }
+
+  try {
+    MailApp.sendEmail({
+      to: config.HR_ALERT_EMAIL,
+      subject: digest.subject,
+      body: digest.body
+    });
+    logInfo("Sent HR alert digest.");
+    return { sent: true };
+  } catch (error) {
+    var message = "Email digest failed: " + getSafeErrorMessage_(error);
+    logError(message);
+    sendAdminAlert_("MailApp Failure", message, config);
+    return { sent: false, warning: message };
+  }
+}
+
+/**
+ * Builds a plain-text alert digest body.
+ *
+ * @param {Object} alerts Alert model.
+ * @returns {string} Digest body.
+ */
+function buildAlertDigestBody_(alerts) {
+  var lines = [
+    "Techolution HR Alerts",
+    "",
+    "LWD Alerts"
+  ];
+
+  appendDigestAlertLines_(lines, alerts.lwdAlerts || []);
+  lines.push("");
+  lines.push("Probation Alerts");
+  appendDigestAlertLines_(lines, alerts.probationAlerts || []);
+
+  return lines.join("\n");
+}
+
+/**
+ * Appends alert lines to the digest body.
+ *
+ * @param {string[]} lines Digest lines.
+ * @param {AlertRecord[]} alerts Alert records.
+ * @returns {void}
+ */
+function appendDigestAlertLines_(lines, alerts) {
+  if (!alerts.length) {
+    lines.push("No active alerts.");
+    return;
+  }
+
+  alerts.forEach(function(alert) {
+    lines.push([
+      alert.employeeId,
+      alert.name,
+      alert.department,
+      alert.type,
+      formatDateForMessage_(alert.relevantDate)
+    ].join(" | "));
+  });
+}
+
+/**
+ * Formats a date for email/log messages.
+ *
+ * @param {*} value Date-like value.
+ * @returns {string} Message-safe date.
+ */
+function formatDateForMessage_(value) {
+  var date = value instanceof Date ? value : normalizeDateValue_(value);
+  if (!date) {
+    return "";
+  }
+
+  if (typeof Utilities !== "undefined" && Utilities.formatDate && typeof Session !== "undefined") {
+    return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+
+  return date.getFullYear() + "-" + padTwo_(date.getMonth() + 1) + "-" + padTwo_(date.getDate());
+}
+
+/**
+ * Pads a number to two digits.
+ *
+ * @param {number} value Numeric value.
+ * @returns {string} Padded string.
+ */
+function padTwo_(value) {
+  return value < 10 ? "0" + value : String(value);
 }
 
 /**
