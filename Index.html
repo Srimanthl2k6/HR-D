@@ -41,14 +41,30 @@
         </article>
 
         <article class="panel">
+          <h2>HR Health Score</h2>
+          <div id="health-score"></div>
+        </article>
+
+        <article class="panel">
           <h2>Org Chart</h2>
           <div id="org-chart"></div>
         </article>
 
         <article class="panel">
           <h2>Drill-Down</h2>
+          <div class="filter-grid" id="drilldown-filters">
+            <label>Region<select id="filter-region"></select></label>
+            <label>Department<select id="filter-department"></select></label>
+            <label>Reporting Manager<select id="filter-manager"></select></label>
+            <label>Employment Status<select id="filter-status"></select></label>
+          </div>
           <div id="drill-down"></div>
         </article>
+      </section>
+
+      <section class="error-view" id="error-view" hidden>
+        <h2>Unable to load dashboard</h2>
+        <p id="error-message"></p>
       </section>
     </main>
 

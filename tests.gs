@@ -23,7 +23,12 @@ function runAllTests() {
     testAlertDigestSendsOnlyWhenActive_,
     testSelfMonitoringDetectsMissedDailyRun_,
     testWorkflowActionStampsRowAndSkipsDuplicate_,
-    testPipelineContinuesWhenAlertEmailFails_
+    testPipelineContinuesWhenAlertEmailFails_,
+    testWebAppPayloadEscapesSheetStrings_,
+    testWebAppFilteredEmployeesUsesSameFilters_,
+    testWebAppSafeJsonPreventsScriptBreakout_,
+    testWebAppStatusReportsPipelineResult_,
+    testWebAppErrorPayloadEscapesMessages_
   ];
   var results = createTestResults_();
 
@@ -476,6 +481,88 @@ function testPipelineContinuesWhenAlertEmailFails_() {
   } finally {
     restoreGlobal_("MailApp", originalMailApp);
   }
+}
+
+/**
+ * Verifies the Web App payload includes required sections and escaped strings.
+ *
+ * @returns {void}
+ */
+function testWebAppPayloadEscapesSheetStrings_() {
+  var source = createPass4SourceData_();
+  source.employees[0].name = "<script>alert('x')</script>";
+  var payload = buildWebAppDashboardPayload_(source, getDefaultConfigValues());
+
+  assertTrue(payload.sections.indexOf("KPIs") !== -1, "Web payload should include KPIs section.");
+  assertTrue(payload.sections.indexOf("Org Chart") !== -1, "Web payload should include Org Chart section.");
+  assertTrue(payload.sections.indexOf("Drill-Down") !== -1, "Web payload should include Drill-Down section.");
+  assertTrue(JSON.stringify(payload).indexOf("<script>") === -1, "Web payload should not include raw script tags.");
+  assertTrue(JSON.stringify(payload).indexOf("&lt;script&gt;") !== -1, "Web payload should include escaped Sheet strings.");
+}
+
+/**
+ * Verifies Web App filtered employees use the same drill-down filters.
+ *
+ * @returns {void}
+ */
+function testWebAppFilteredEmployeesUsesSameFilters_() {
+  var rows = getFilteredEmployeesFromData_(createPass4SourceData_(), {
+    region: "India",
+    department: "Engineering",
+    reportingManager: "All",
+    employmentStatus: HRD.EMPLOYMENT_STATUSES.UNDER_PROBATION
+  });
+
+  assertEquals(1, rows.length, "Filtered Web App employee rows should match filter values.");
+  assertEquals("PROB-001", rows[0].employeeId, "Filtered Web App rows should include the matching employee.");
+}
+
+/**
+ * Verifies initial payload JSON is safe inside a script tag.
+ *
+ * @returns {void}
+ */
+function testWebAppSafeJsonPreventsScriptBreakout_() {
+  var safeJson = toSafeJsonForScript_({
+    value: "</script><script>alert('x')</script>"
+  });
+
+  assertTrue(safeJson.indexOf("</script>") === -1, "Safe JSON should not contain a closing script tag.");
+  assertTrue(safeJson.indexOf("\\u003c/script\\u003e") !== -1, "Safe JSON should escape angle brackets.");
+}
+
+/**
+ * Verifies pipeline status is human-readable for the Web App.
+ *
+ * @returns {void}
+ */
+function testWebAppStatusReportsPipelineResult_() {
+  var status = buildPipelineStatusPayload_({
+    ok: true,
+    runId: "run-test",
+    triggerSource: HRD.TRIGGER_SOURCES.TEST,
+    durationMs: 42,
+    warnings: ["Email digest failed"],
+    errors: []
+  });
+
+  assertTrue(status.ok, "Status should preserve ok flag.");
+  assertEquals("run-test", status.runId, "Status should expose run ID.");
+  assertTrue(status.message.indexOf("completed") !== -1, "Status should include a readable completion message.");
+  assertEquals(1, status.warnings.length, "Status should expose warnings.");
+}
+
+/**
+ * Verifies Web App error payloads do not expose raw Sheet-provided markup.
+ *
+ * @returns {void}
+ */
+function testWebAppErrorPayloadEscapesMessages_() {
+  var payload = buildWebAppErrorPayload_(new Error("Bad <script>alert('x')</script>"));
+
+  assertEquals(false, payload.ok, "Error payload should expose a failed state.");
+  assertTrue(payload.message.indexOf("<script>") === -1, "Error payload should not include raw script tags.");
+  assertTrue(payload.message.indexOf("&lt;script&gt;") !== -1, "Error payload should HTML-escape messages.");
 }
 
 /**

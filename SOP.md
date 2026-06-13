@@ -22,7 +22,13 @@ Admins run `installTriggers()` once after deployment to create installable `onEd
 
 ## Web App Deployment
 
-Pass 9 completes this section after HtmlService deployment behavior is implemented and verified.
+Deploy from Apps Script as a Web App with `doGet(e)` as the entrypoint.
+
+- Execute as: Me
+- Access: signed-in organization users
+- Client API functions: `getDashboardData()`, `getFilteredEmployees(filters)`, and `getLastPipelineStatus()`
+
+Pass 9 completes deployment screenshots, final URL capture, and reviewer access notes.
 
 ## Troubleshooting
 

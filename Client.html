@@ -2,6 +2,17 @@
   (function() {
     var root = document.getElementById("dashboard-root");
     var status = document.getElementById("status");
+    var errorView = document.getElementById("error-view");
+    var errorMessage = document.getElementById("error-message");
+    var state = {
+      payload: window.__INITIAL_DASHBOARD_PAYLOAD__ || null,
+      filters: {
+        region: "All",
+        department: "All",
+        reportingManager: "All",
+        employmentStatus: "All"
+      }
+    };
 
     function setStatus(message) {
       if (status) {
@@ -9,37 +20,258 @@
       }
     }
 
-    function renderDashboard(model) {
-      if (!root || !model) {
+    function setText(id, value) {
+      var element = document.getElementById(id);
+      if (element) {
+        element.textContent = value == null ? "" : String(value);
+      }
+    }
+
+    function showError(error) {
+      if (root) {
+        root.hidden = true;
+      }
+      if (errorView) {
+        errorView.hidden = false;
+      }
+      if (errorMessage) {
+        errorMessage.textContent = error && error.message ? error.message : "Unable to refresh dashboard data.";
+      }
+      setStatus("Dashboard error.");
+    }
+
+    function hideError() {
+      if (root) {
+        root.hidden = false;
+      }
+      if (errorView) {
+        errorView.hidden = true;
+      }
+    }
+
+    function renderDashboard(payload) {
+      if (payload && payload.ok === false) {
+        showError(payload);
+        return;
+      }
+
+      if (!root || !payload || !payload.model) {
         setStatus("Dashboard data is unavailable.");
         return;
       }
 
-      document.getElementById("kpi-strip").textContent = JSON.stringify(model.kpis || {});
-      document.getElementById("alerts").textContent = "LWD: " + (model.lwdAlerts || []).length + ", Probation: " + (model.probationAlerts || []).length;
-      document.getElementById("department-breakdown").textContent = JSON.stringify(model.departmentBreakdown || []);
-      document.getElementById("attrition").textContent = JSON.stringify(model.attrition || {});
-      document.getElementById("risk-register").textContent = JSON.stringify(model.riskSummary || {});
-      document.getElementById("org-chart").textContent = JSON.stringify(model.orgChart || {});
-      document.getElementById("drill-down").textContent = JSON.stringify(model.drillDownRows || []);
-      setStatus("Dashboard skeleton loaded.");
+      hideError();
+      state.payload = payload;
+      state.filters = payload.filters || state.filters;
+      var model = payload.model;
+
+      renderKpis(model.kpis || {});
+      renderAlerts(model.lwdAlerts || [], model.probationAlerts || []);
+      renderDepartmentBreakdown(model.departmentBreakdown || []);
+      renderAttrition(model.attrition || {});
+      renderRiskRegister(model.riskSummary || {});
+      renderHealthScore(model.healthScore || {});
+      renderOrgChart(model.orgChart || {});
+      configureFilters(model.drillDownRows || []);
+      renderDrillDownRows(model.drillDownRows || []);
+      setStatus("Last updated " + (payload.generatedAt || ""));
+    }
+
+    function renderKpis(kpis) {
+      renderKeyValueList("kpi-strip", [
+        ["Total Headcount", kpis.totalHeadcount || 0],
+        ["India", (kpis.regionHeadcount || {}).India || 0],
+        ["US", (kpis.regionHeadcount || {}).US || 0],
+        ["Confirmed", (kpis.statusHeadcount || {}).Confirmed || 0],
+        ["Under Probation", (kpis.statusHeadcount || {})["Under Probation"] || 0],
+        ["Intern", (kpis.statusHeadcount || {}).Intern || 0],
+        ["Productivity Flags", kpis.productivityFlagCount || 0],
+        ["Active Risk Items", kpis.activeRiskCount || 0]
+      ]);
+    }
+
+    function renderAlerts(lwdAlerts, probationAlerts) {
+      renderTable("alerts", ["Type", "Employee ID", "Name", "Department", "Date", "Severity"], lwdAlerts.concat(probationAlerts).map(function(alert) {
+        return [alert.type, alert.employeeId, alert.name, alert.department, alert.relevantDate, alert.severity];
+      }));
+    }
+
+    function renderDepartmentBreakdown(rows) {
+      renderTable("department-breakdown", ["Department", "Headcount", "Confirmed", "Under Probation", "Intern"], rows.map(function(row) {
+        var status = row.statusHeadcount || {};
+        return [row.department, row.headcount, status.Confirmed || 0, status["Under Probation"] || 0, status.Intern || 0];
+      }));
+    }
+
+    function renderAttrition(attrition) {
+      renderKeyValueList("attrition", [
+        ["Quarter", attrition.currentQuarter || ""],
+        ["Exits", attrition.exits || 0],
+        ["Rate", (attrition.rate || 0) + "%"]
+      ]);
+    }
+
+    function renderRiskRegister(summary) {
+      var rows = [];
+      Object.keys(summary.byCategory || {}).forEach(function(key) { rows.push(["Category", key, summary.byCategory[key]]); });
+      Object.keys(summary.byLevel || {}).forEach(function(key) { rows.push(["Level", key, summary.byLevel[key]]); });
+      Object.keys(summary.byStatus || {}).forEach(function(key) { rows.push(["Status", key, summary.byStatus[key]]); });
+      renderTable("risk-register", ["Group", "Name", "Count"], rows);
+    }
+
+    function renderHealthScore(healthScore) {
+      var rows = [["Score", healthScore.score || 0]];
+      Object.keys(healthScore.components || {}).forEach(function(key) {
+        var component = healthScore.components[key] || {};
+        rows.push([
+          key,
+          "Value: " + (component.value || 0) +
+            ", Weight: " + (component.weight || 0) +
+            ", Score: " + (component.score || 0) +
+            ", Weighted: " + (component.weightedScore || 0)
+        ]);
+      });
+      renderKeyValueList("health-score", rows);
+    }
+
+    function renderOrgChart(orgChart) {
+      renderTable("org-chart", ["Manager", "Employee", "Emp ID"], (orgChart.managers || []).map(function(row) {
+        return [row.reportingManager, row.name, row.employeeId];
+      }));
+    }
+
+    function renderDrillDownRows(rows) {
+      renderTable("drill-down", ["Emp ID", "Name", "Region", "Department", "Manager", "Status"], rows.map(function(row) {
+        return [row.employeeId, row.name, row.region, row.department, row.reportingManager, row.employmentStatus];
+      }));
+    }
+
+    function renderKeyValueList(id, rows) {
+      renderTable(id, ["Metric", "Value"], rows);
+    }
+
+    function renderTable(id, headers, rows) {
+      var target = document.getElementById(id);
+      if (!target) {
+        return;
+      }
+      target.textContent = "";
+      var table = document.createElement("table");
+      var thead = document.createElement("thead");
+      var headerRow = document.createElement("tr");
+      headers.forEach(function(header) {
+        var th = document.createElement("th");
+        th.textContent = header;
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+      var tbody = document.createElement("tbody");
+      if (!rows.length) {
+        var emptyRow = document.createElement("tr");
+        var emptyCell = document.createElement("td");
+        emptyCell.colSpan = headers.length;
+        emptyCell.textContent = "No records";
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+      }
+      rows.forEach(function(row) {
+        var tr = document.createElement("tr");
+        row.forEach(function(value) {
+          var td = document.createElement("td");
+          td.textContent = value == null ? "" : String(value);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      target.appendChild(table);
+    }
+
+    function configureFilters(rows) {
+      setSelectOptions("filter-region", ["All", "India", "US"], state.filters.region);
+      setSelectOptions("filter-department", ["All"].concat(uniqueValues(rows, "department")), state.filters.department);
+      setSelectOptions("filter-manager", ["All"].concat(uniqueValues(rows, "reportingManager")), state.filters.reportingManager);
+      setSelectOptions("filter-status", ["All", "Confirmed", "Under Probation", "Intern"], state.filters.employmentStatus);
+    }
+
+    function setSelectOptions(id, values, selected) {
+      var select = document.getElementById(id);
+      if (!select) {
+        return;
+      }
+      var currentValue = selected || select.value || "All";
+      select.textContent = "";
+      values.forEach(function(value) {
+        var option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === currentValue;
+        select.appendChild(option);
+      });
+      if (values.indexOf(currentValue) === -1) {
+        select.value = "All";
+      }
+      if (select.dataset.ready !== "true") {
+        select.addEventListener("change", refreshFilteredRows);
+        select.dataset.ready = "true";
+      }
+    }
+
+    function uniqueValues(rows, field) {
+      var seen = {};
+      rows.forEach(function(row) {
+        if (row[field]) {
+          seen[row[field]] = true;
+        }
+      });
+      return Object.keys(seen).sort();
+    }
+
+    function collectFilters() {
+      return {
+        region: getSelectValue("filter-region", "All"),
+        department: getSelectValue("filter-department", "All"),
+        reportingManager: getSelectValue("filter-manager", "All"),
+        employmentStatus: getSelectValue("filter-status", "All")
+      };
+    }
+
+    function getSelectValue(id, fallback) {
+      var select = document.getElementById(id);
+      return select ? select.value : fallback;
+    }
+
+    function refreshFilteredRows() {
+      state.filters = collectFilters();
+      if (!window.google || !google.script || !google.script.run) {
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(function(response) {
+          if (response && response.ok === false) {
+            showError(response);
+            return;
+          }
+          renderDrillDownRows(response || []);
+        })
+        .withFailureHandler(showError)
+        .getFilteredEmployees(state.filters);
     }
 
     function refreshDashboard() {
       if (!window.google || !google.script || !google.script.run) {
-        renderDashboard(window.__INITIAL_DASHBOARD_PAYLOAD__);
+        renderDashboard(state.payload);
         return;
       }
 
       google.script.run
         .withSuccessHandler(renderDashboard)
-        .withFailureHandler(function(error) {
-          setStatus(error && error.message ? error.message : "Unable to refresh dashboard data.");
-        })
+        .withFailureHandler(showError)
         .getDashboardData();
     }
 
-    renderDashboard(window.__INITIAL_DASHBOARD_PAYLOAD__);
+    renderDashboard(state.payload);
     window.setInterval(refreshDashboard, 5000);
   })();
 </script>
