@@ -24,27 +24,20 @@ function runAllTests() {
     testSelfMonitoringDetectsMissedDailyRun_,
     testWorkflowActionStampsRowAndSkipsDuplicate_,
     testPipelineContinuesWhenAlertEmailFails_,
+    testConfigThresholdChangesRecalculateAlerts_,
     testWebAppPayloadEscapesSheetStrings_,
     testWebAppFilteredEmployeesUsesSameFilters_,
     testWebAppSafeJsonPreventsScriptBreakout_,
     testWebAppStatusReportsPipelineResult_,
-    testWebAppErrorPayloadEscapesMessages_
+    testWebAppErrorPayloadEscapesMessages_,
+    testRunAllTestsLogsIndividualResults_,
+    testAcceptanceVerificationReportCoversRequiredChecks_,
+    testQaTestDataHelpersUseUniqueTestIdsOnly_
   ];
-  var results = createTestResults_();
-
-  tests.forEach(function(testFn) {
-    try {
-      testFn();
-      results.passed += 1;
-      results.tests.push({ name: testFn.name, ok: true });
-    } catch (error) {
-      results.failed += 1;
-      results.failures.push({ name: testFn.name, message: error.message });
-      results.tests.push({ name: testFn.name, ok: false, message: error.message });
-    }
-  });
+  var results = runTestFunctions_(tests);
 
   logInfo("Test harness completed. Passed: " + results.passed + ". Failed: " + results.failed + ".");
+  logInfo("Acceptance verification report: " + buildAcceptanceVerificationReport_().summary);
   return results;
 }
 
@@ -104,6 +97,166 @@ function createTestResults_() {
     failures: [],
     tests: []
   };
+}
+
+/**
+ * Runs test functions and logs each result.
+ *
+ * @param {Function[]} tests Test functions.
+ * @returns {Object} Test run summary.
+ */
+function runTestFunctions_(tests) {
+  var results = createTestResults_();
+
+  tests.forEach(function(testFn) {
+    try {
+      testFn();
+      results.passed += 1;
+      results.tests.push({ name: testFn.name, ok: true });
+      logInfo("PASS " + testFn.name);
+    } catch (error) {
+      var message = getSafeErrorMessage_(error);
+      results.failed += 1;
+      results.failures.push({ name: testFn.name, message: message });
+      results.tests.push({ name: testFn.name, ok: false, message: message });
+      logError("FAIL " + testFn.name + ": " + message);
+    }
+  });
+
+  return results;
+}
+
+/**
+ * Builds the Pass 8 acceptance verification checklist.
+ *
+ * @returns {Object} Acceptance report metadata.
+ */
+function buildAcceptanceVerificationReport_() {
+  var checks = getAcceptanceVerificationChecklist_();
+  var automatedCount = checks.filter(function(check) {
+    return check.mode === "automated";
+  }).length;
+  var manualCount = checks.length - automatedCount;
+
+  return {
+    generatedAt: new Date(),
+    summary: automatedCount + " automated checks and " + manualCount + " manual checks are defined.",
+    checks: checks
+  };
+}
+
+/**
+ * Returns the canonical Pass 8 acceptance checklist.
+ *
+ * @returns {Object[]} Acceptance checks.
+ */
+function getAcceptanceVerificationChecklist_() {
+  return [
+    createAcceptanceCheck_("LWD alerts", "automated", "Sheet Dashboard and Web App"),
+    createAcceptanceCheck_("Probation alerts", "automated", "Sheet Dashboard and Web App"),
+    createAcceptanceCheck_("Attrition math", "automated", "Shared dashboard model"),
+    createAcceptanceCheck_("Column reorder resilience", "automated", "Header-agnostic loader"),
+    createAcceptanceCheck_("Config threshold changes", "automated", "_Config driven model"),
+    createAcceptanceCheck_("Workflow idempotency", "automated", "Workflow action handlers"),
+    createAcceptanceCheck_("Formula sanitization", "automated", "Sheet output sanitization"),
+    createAcceptanceCheck_("HTML escaping", "automated", "HtmlService payload and client rendering"),
+    createAcceptanceCheck_("Three employee add scenario", "manual", "Sheet Dashboard and Web App"),
+    createAcceptanceCheck_("Probation DOJ change", "manual", "Sheet Dashboard and Web App"),
+    createAcceptanceCheck_("Offboarded row deletion", "manual", "Sheet Dashboard and Web App"),
+    createAcceptanceCheck_("Workbook config threshold change", "manual", "Sheet Dashboard and Web App"),
+    createAcceptanceCheck_("Invalid status handling", "manual", "Sheet validation/logging"),
+    createAcceptanceCheck_("Authenticated Web App access", "manual", "Deployed Web App"),
+    createAcceptanceCheck_("Unauthenticated redirect", "manual", "Incognito browser")
+  ];
+}
+
+/**
+ * Creates an acceptance checklist entry.
+ *
+ * @param {string} name Check name.
+ * @param {string} mode automated or manual.
+ * @param {string} surface Covered surface.
+ * @returns {Object} Checklist entry.
+ */
+function createAcceptanceCheck_(name, mode, surface) {
+  return {
+    name: name,
+    mode: mode,
+    surface: surface,
+    status: mode === "automated" ? "covered-by-runAllTests" : "manual-verification-required"
+  };
+}
+
+/**
+ * Creates QA test data using unique IDs that cleanup helpers can identify.
+ *
+ * @returns {Object} Normalized source data.
+ */
+function createQaTestDataSet_() {
+  var source = createPass4SourceData_();
+  var prefix = createQaTestIdPrefix_();
+
+  source.employees = [
+    createTestEmployee_(prefix + "-PROB", "QA Probation", "India", "Engineering", HRD.EMPLOYMENT_STATUSES.UNDER_PROBATION, createRelativeDayDate_(-155), null, 91),
+    createTestEmployee_(prefix + "-INT1", "QA Intern Upcoming", "India", "Engineering", HRD.EMPLOYMENT_STATUSES.INTERN, createRelativeDayDate_(-40), createRelativeDayDate_(20), 82),
+    createTestEmployee_(prefix + "-INT2", "QA Intern Passed", "US", "People", HRD.EMPLOYMENT_STATUSES.INTERN, createRelativeDayDate_(-70), createRelativeDayDate_(-5), 77),
+    createTestEmployee_(prefix + "-CONF", "QA Confirmed", "US", "People", HRD.EMPLOYMENT_STATUSES.CONFIRMED, createRelativeDayDate_(-365), null, 96)
+  ];
+  source.offboarded = [
+    {
+      employeeId: prefix + "-EXIT",
+      name: "QA Exit",
+      department: "Engineering",
+      designation: "Developer",
+      lastWorkingDay: createRelativeDayDate_(0, 0, -7),
+      reason: "QA test",
+      exitQuarter: createCurrentQuarterLabelForTest_()
+    }
+  ];
+
+  return source;
+}
+
+/**
+ * Creates the QA employee ID prefix.
+ *
+ * @returns {string} QA ID prefix.
+ */
+function createQaTestIdPrefix_() {
+  return "QA-TEST-" + UtilitiesLikeUuid_().slice(0, 8).toUpperCase();
+}
+
+/**
+ * Returns true when an employee ID belongs to QA helper data.
+ *
+ * @param {string} employeeId Employee ID.
+ * @returns {boolean} True for QA helper IDs.
+ */
+function isQaTestEmployeeId_(employeeId) {
+  return String(employeeId || "").indexOf("QA-TEST-") === 0;
+}
+
+/**
+ * Returns true when a row is safe for QA cleanup deletion.
+ *
+ * @param {Object} row Normalized row.
+ * @returns {boolean} True when cleanup may delete the row.
+ */
+function shouldDeleteQaTestRow_(row) {
+  return Boolean(row && isQaTestEmployeeId_(row.employeeId));
+}
+
+/**
+ * Provides a UUID-like value in Apps Script and local Node harnesses.
+ *
+ * @returns {string} UUID-like value.
+ */
+function UtilitiesLikeUuid_() {
+  if (typeof Utilities !== "undefined" && Utilities.getUuid) {
+    return Utilities.getUuid();
+  }
+
+  return String(new Date().getTime()) + "-" + String(Math.floor(Math.random() * 1000000));
 }
 
 /**
@@ -484,6 +637,22 @@ function testPipelineContinuesWhenAlertEmailFails_() {
 }
 
 /**
+ * Verifies config threshold changes alter alert and productivity outputs.
+ *
+ * @returns {void}
+ */
+function testConfigThresholdChangesRecalculateAlerts_() {
+  var config = getDefaultConfigValues();
+  config.LWD_ALERT_DAYS = 10;
+  config.PRODUCTIVITY_TARGET = 90;
+  var model = buildDashboardModel(createPass4SourceData_(), config);
+
+  assertEquals(1, model.lwdAlerts.length, "Lowering LWD threshold should reduce active LWD alerts.");
+  assertEquals("INT-PASSED", model.lwdAlerts[0].employeeId, "Only the recently passed LWD should remain inside the smaller threshold.");
+  assertEquals(2, model.kpis.productivityFlagCount, "Raising PRODUCTIVITY_TARGET should increase productivity flags.");
+}
+
+/**
  * Verifies the Web App payload includes required sections and escaped strings.
  *
  * @returns {void}
@@ -563,6 +732,90 @@ function testWebAppErrorPayloadEscapesMessages_() {
   assertEquals(false, payload.ok, "Error payload should expose a failed state.");
   assertTrue(payload.message.indexOf("<script>") === -1, "Error payload should not include raw script tags.");
   assertTrue(payload.message.indexOf("&lt;script&gt;") !== -1, "Error payload should HTML-escape messages.");
+}
+
+/**
+ * Verifies the test harness logs each pass and fail result.
+ *
+ * @returns {void}
+ */
+function testRunAllTestsLogsIndividualResults_() {
+  var captured = [];
+  var originalAppendLog = appendLog;
+  appendLog = function(level, message, userEmail) {
+    captured.push({ level: level, message: message, userEmail: userEmail || "" });
+    return { level: level, message: message };
+  };
+
+  try {
+    runTestFunctions_([
+      function passingHarnessProbe_() {},
+      function failingHarnessProbe_() {
+        throw new Error("Intentional failure");
+      }
+    ]);
+  } finally {
+    appendLog = originalAppendLog;
+  }
+
+  assertTrue(
+    captured.some(function(entry) {
+      return entry.level === HRD.LOG_LEVELS.INFO && entry.message.indexOf("PASS passingHarnessProbe_") !== -1;
+    }),
+    "Harness should log individual passing tests."
+  );
+  assertTrue(
+    captured.some(function(entry) {
+      return entry.level === HRD.LOG_LEVELS.ERROR && entry.message.indexOf("FAIL failingHarnessProbe_") !== -1;
+    }),
+    "Harness should log individual failing tests."
+  );
+}
+
+/**
+ * Verifies acceptance verification metadata covers Sheet and Web App checks.
+ *
+ * @returns {void}
+ */
+function testAcceptanceVerificationReportCoversRequiredChecks_() {
+  var report = buildAcceptanceVerificationReport_();
+  var names = report.checks.map(function(check) {
+    return check.name;
+  }).join("|");
+
+  assertTrue(report.generatedAt instanceof Date, "Acceptance report should include a generated timestamp.");
+  assertTrue(names.indexOf("LWD alerts") !== -1, "Acceptance report should cover LWD alerts.");
+  assertTrue(names.indexOf("Probation alerts") !== -1, "Acceptance report should cover probation alerts.");
+  assertTrue(names.indexOf("Attrition math") !== -1, "Acceptance report should cover attrition math.");
+  assertTrue(names.indexOf("Column reorder resilience") !== -1, "Acceptance report should cover column reorder resilience.");
+  assertTrue(names.indexOf("Config threshold changes") !== -1, "Acceptance report should cover config threshold changes.");
+  assertTrue(names.indexOf("Workflow idempotency") !== -1, "Acceptance report should cover workflow idempotency.");
+  assertTrue(names.indexOf("Formula sanitization") !== -1, "Acceptance report should cover formula sanitization.");
+  assertTrue(names.indexOf("HTML escaping") !== -1, "Acceptance report should cover HTML escaping.");
+  assertTrue(names.indexOf("Authenticated Web App access") !== -1, "Acceptance report should include Web App access checks.");
+  assertTrue(names.indexOf("Unauthenticated redirect") !== -1, "Acceptance report should include unauthenticated redirect checks.");
+}
+
+/**
+ * Verifies QA helper data is uniquely prefixed and cleanup predicates spare real data.
+ *
+ * @returns {void}
+ */
+function testQaTestDataHelpersUseUniqueTestIdsOnly_() {
+  var data = createQaTestDataSet_();
+  var ids = data.employees.map(function(employee) {
+    return employee.employeeId;
+  }).concat(data.offboarded.map(function(row) {
+    return row.employeeId;
+  }));
+
+  assertTrue(ids.length >= 4, "QA helper data should include enough rows for acceptance scenarios.");
+  ids.forEach(function(id) {
+    assertTrue(isQaTestEmployeeId_(id), "QA helper IDs should be recognized as test IDs: " + id);
+  });
+  assertEquals(false, isQaTestEmployeeId_("IND-001"), "Real-looking employee IDs must not be treated as QA test IDs.");
+  assertEquals(false, shouldDeleteQaTestRow_({ employeeId: "IND-001" }), "Cleanup must not delete non-test rows.");
+  assertTrue(shouldDeleteQaTestRow_({ employeeId: ids[0] }), "Cleanup should target QA test rows.");
 }
 
 /**
