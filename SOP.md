@@ -6,11 +6,11 @@ Source tabs feed Apps Script modules. Apps Script renders the Sheet dashboard su
 
 ## Daily Usage Guide
 
-Pass 9 completes this section after all core functionality is implemented and verified.
+HR users work in the source tabs only. Generated tabs are protected and are refreshed by script triggers in later passes.
 
 ## Threshold Modification Guide
 
-Pass 9 completes this section after `_Config` behavior is implemented and verified.
+Administrators change thresholds in `_Config`. Invalid values fall back to defaults and are logged in plain English.
 
 ## Real-Time Reflection
 
@@ -26,7 +26,7 @@ Pass 9 completes this section after HtmlService deployment behavior is implement
 
 ## Troubleshooting
 
-Pass 9 completes this section after logging, self-monitoring, and acceptance verification are complete.
+Review `Logs` for timestamped INFO, WARN, and ERROR messages. Review `Changelog` for one row per full pipeline run.
 
 ## Change Management
 

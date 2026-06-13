@@ -132,6 +132,28 @@ var HRD = {
     LOG_RETENTION_DAYS: 90,
     EMP_ID_PATTERN: "^[A-Za-z0-9_-]+$"
   }),
+  CONFIG_DESCRIPTIONS: Object.freeze({
+    LWD_ALERT_DAYS: "Days before or after an intern LWD to surface an alert.",
+    PROBATION_ALERT_DAYS: "Days before confirmation date to surface a probation alert.",
+    PROBATION_DURATION_DAYS: "Total probation period in calendar days.",
+    PRODUCTIVITY_TARGET: "Productivity score below which an employee is flagged.",
+    HR_ALERT_EMAIL: "Comma-separated HR recipients for active alert digests.",
+    ADMIN_ALERT_EMAIL: "Admin recipient for system self-monitoring alerts.",
+    PIPELINE_TRIGGER_HOUR: "UTC hour for the daily scheduled pipeline trigger.",
+    LOG_RETENTION_DAYS: "Operational retention target for Logs before manual archive.",
+    EMP_ID_PATTERN: "Regular expression used to validate employee IDs."
+  }),
+  CONFIG_VALIDATION: Object.freeze({
+    LWD_ALERT_DAYS: Object.freeze({ type: "number", min: 1, max: 180 }),
+    PROBATION_ALERT_DAYS: Object.freeze({ type: "number", min: 1, max: 90 }),
+    PROBATION_DURATION_DAYS: Object.freeze({ type: "number", min: 60, max: 365 }),
+    PRODUCTIVITY_TARGET: Object.freeze({ type: "number", min: 0, max: 100 }),
+    HR_ALERT_EMAIL: Object.freeze({ type: "emailList" }),
+    ADMIN_ALERT_EMAIL: Object.freeze({ type: "email" }),
+    PIPELINE_TRIGGER_HOUR: Object.freeze({ type: "number", min: 0, max: 23 }),
+    LOG_RETENTION_DAYS: Object.freeze({ type: "number", min: 1, max: 3650 }),
+    EMP_ID_PATTERN: Object.freeze({ type: "regex" })
+  }),
   LOG_LEVELS: Object.freeze({
     INFO: "INFO",
     WARN: "WARN",
@@ -177,6 +199,67 @@ var HRD = {
       "Attrition Rate"
     ]),
     CONFIG: Object.freeze(["Config Key", "Value", "Description"])
+  }),
+  SOURCE_HEADERS: Object.freeze({
+    INDIA_EMPLOYEES: Object.freeze([
+      "Emp ID",
+      "Name",
+      "Department",
+      "Designation",
+      "Reporting Manager",
+      "Skillset",
+      "Date of Joining (DOJ)",
+      "Employment Status",
+      "Last Working Day (LWD for interns)",
+      "Workflow Action",
+      "Workflow Executed At",
+      "Workflow Last Result"
+    ]),
+    US_EMPLOYEES: Object.freeze([
+      "Emp ID",
+      "Name",
+      "Department",
+      "Designation",
+      "Reporting Manager",
+      "Skillset",
+      "DOJ",
+      "Employment Status",
+      "Allocation %",
+      "CTC",
+      "Workflow Action",
+      "Workflow Executed At",
+      "Workflow Last Result"
+    ]),
+    RM_DATA: Object.freeze(["Emp ID", "Name"]),
+    FINANCE_PRODUCTIVITY: Object.freeze([
+      "Emp ID",
+      "CTC INR Annual",
+      "CTC INR Monthly",
+      "CTC USD Annual",
+      "CTC USD Monthly",
+      "Productivity Average"
+    ]),
+    RISK_REPORT: Object.freeze([
+      "Emp ID",
+      "Name",
+      "Risk Category",
+      "Risk Level",
+      "Description",
+      "Date Raised",
+      "Status",
+      "Workflow Action",
+      "Workflow Executed At",
+      "Workflow Last Result"
+    ]),
+    OFFBOARDED_RESOURCES: Object.freeze([
+      "Emp ID",
+      "Name",
+      "Department",
+      "Designation",
+      "Last Working Day",
+      "Reason",
+      "Exit Quarter"
+    ])
   }),
   DRILL_DOWN: Object.freeze({
     FILTER_CELLS: Object.freeze({
@@ -307,4 +390,175 @@ function getOutputTabNames() {
  */
 function getColumnAliases(tabKey) {
   return HRD.COLUMN_ALIASES[tabKey] || {};
+}
+
+/**
+ * Loads runtime configuration from the _Config tab with safe defaults.
+ *
+ * @returns {Object} Validated runtime configuration.
+ */
+function loadConfig() {
+  var config = getDefaultConfigValues();
+  var spreadsheet = getActiveSpreadsheet_();
+
+  if (!spreadsheet) {
+    return config;
+  }
+
+  var sheet = getSheetByName_(spreadsheet, HRD.TABS.CONFIG);
+  if (!sheet) {
+    return config;
+  }
+
+  var values = getSheetValues_(sheet);
+  for (var rowIndex = 1; rowIndex < values.length; rowIndex += 1) {
+    var row = values[rowIndex] || [];
+    var key = String(row[0] || "").trim();
+
+    if (!key || !Object.prototype.hasOwnProperty.call(HRD.DEFAULT_CONFIG, key)) {
+      continue;
+    }
+
+    var validation = validateConfigValue_(key, row[1]);
+    if (validation.ok) {
+      config[key] = validation.value;
+    } else {
+      logWarn("Config value for " + key + " is invalid. Using default value. " + validation.message);
+    }
+  }
+
+  return config;
+}
+
+/**
+ * Returns the default _Config rows.
+ *
+ * @returns {Array[]} Config rows including descriptions.
+ */
+function getDefaultConfigRows() {
+  return Object.keys(HRD.DEFAULT_CONFIG).map(function(key) {
+    return [
+      key,
+      HRD.DEFAULT_CONFIG[key],
+      HRD.CONFIG_DESCRIPTIONS[key] || ""
+    ];
+  });
+}
+
+/**
+ * Validates and coerces a config value.
+ *
+ * @param {string} key Config key.
+ * @param {*} value Raw value from _Config.
+ * @returns {Object} Validation result.
+ */
+function validateConfigValue_(key, value) {
+  var rule = HRD.CONFIG_VALIDATION[key];
+
+  if (!rule) {
+    return { ok: true, value: value, message: "" };
+  }
+
+  if (rule.type === "number") {
+    return validateNumberConfig_(key, value, rule.min, rule.max);
+  }
+
+  if (rule.type === "email") {
+    return validateEmailConfig_(value);
+  }
+
+  if (rule.type === "emailList") {
+    return validateEmailListConfig_(value);
+  }
+
+  if (rule.type === "regex") {
+    return validateRegexConfig_(value);
+  }
+
+  return { ok: true, value: value, message: "" };
+}
+
+/**
+ * Validates numeric config values.
+ *
+ * @param {string} key Config key.
+ * @param {*} value Raw value.
+ * @param {number} min Minimum value.
+ * @param {number} max Maximum value.
+ * @returns {Object} Validation result.
+ */
+function validateNumberConfig_(key, value, min, max) {
+  var numberValue = Number(value);
+
+  if (!isFinite(numberValue) || numberValue < min || numberValue > max) {
+    return {
+      ok: false,
+      value: HRD.DEFAULT_CONFIG[key],
+      message: "Expected a number from " + min + " to " + max + "."
+    };
+  }
+
+  return { ok: true, value: numberValue, message: "" };
+}
+
+/**
+ * Validates a single email config value.
+ *
+ * @param {*} value Raw value.
+ * @returns {Object} Validation result.
+ */
+function validateEmailConfig_(value) {
+  var email = String(value || "").trim();
+
+  if (!isValidEmail_(email)) {
+    return { ok: false, value: "", message: "Expected a valid email address." };
+  }
+
+  return { ok: true, value: email, message: "" };
+}
+
+/**
+ * Validates a comma-separated email list config value.
+ *
+ * @param {*} value Raw value.
+ * @returns {Object} Validation result.
+ */
+function validateEmailListConfig_(value) {
+  var emails = String(value || "").split(",").map(function(email) {
+    return email.trim();
+  }).filter(Boolean);
+
+  if (!emails.length || emails.some(function(email) { return !isValidEmail_(email); })) {
+    return { ok: false, value: "", message: "Expected one or more comma-separated email addresses." };
+  }
+
+  return { ok: true, value: emails.join(","), message: "" };
+}
+
+/**
+ * Validates a regular expression config value.
+ *
+ * @param {*} value Raw value.
+ * @returns {Object} Validation result.
+ */
+function validateRegexConfig_(value) {
+  var pattern = String(value || "").trim();
+
+  try {
+    RegExp(pattern);
+  } catch (error) {
+    return { ok: false, value: "", message: "Expected a valid regular expression." };
+  }
+
+  return { ok: true, value: pattern, message: "" };
+}
+
+/**
+ * Returns true when a value has a basic email shape.
+ *
+ * @param {string} email Email value.
+ * @returns {boolean} True for valid email shape.
+ */
+function isValidEmail_(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || ""));
 }
