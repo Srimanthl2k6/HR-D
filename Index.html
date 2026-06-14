@@ -5,66 +5,142 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Techolution HR Automation Dashboard</title>
-    <?!= include("Styles"); ?>
+    <?!= include("styles"); ?>
   </head>
   <body>
     <main class="app-shell">
       <header class="app-header">
-        <div>
-          <h1>Techolution HR Automation Dashboard</h1>
+        <div class="header-copy">
+          <p class="app-kicker">Techolution People Operations</p>
+          <h1>HR Automation Dashboard</h1>
           <p id="status">Loading dashboard data...</p>
         </div>
-        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">
-          Theme: Auto
-        </button>
+
+        <div class="header-actions">
+          <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">
+            Theme: Auto
+          </button>
+        </div>
+
+        <nav class="app-nav" aria-label="Dashboard views">
+          <button class="nav-link" type="button" data-view-target="overview">Overview</button>
+          <button class="nav-link" type="button" data-view-target="alerts">Alerts</button>
+          <button class="nav-link" type="button" data-view-target="people">People</button>
+          <button class="nav-link" type="button" data-view-target="org">Org Chart</button>
+          <button class="nav-link" type="button" data-view-target="risk">Risk &amp; Attrition</button>
+          <button class="nav-link" type="button" data-view-target="health">Health Score</button>
+        </nav>
       </header>
 
-      <section class="dashboard-grid" id="dashboard-root" aria-live="polite">
-        <article class="panel panel-wide">
-          <h2>KPI Strip</h2>
-          <div id="kpi-strip"></div>
-        </article>
+      <section class="view-stack" id="dashboard-root" aria-live="polite">
+        <section class="dashboard-view dashboard-grid" data-view="overview" aria-label="Overview">
+          <article class="panel panel-wide overview-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Executive Overview</h2>
+              </div>
+            </div>
+            <div id="overview-summary"></div>
+          </article>
 
-        <article class="panel panel-primary">
-          <h2>Alerts</h2>
-          <div id="alerts"></div>
-        </article>
+          <article class="panel panel-primary">
+            <div class="panel-heading">
+              <div>
+                <h2>KPI Strip</h2>
+              </div>
+            </div>
+            <div id="kpi-strip"></div>
+          </article>
 
-        <article class="panel">
-          <h2>Department Breakdown</h2>
-          <div id="department-breakdown"></div>
-        </article>
+          <article class="panel panel-compact">
+            <div class="panel-heading">
+              <div>
+                <h2>Health Snapshot</h2>
+              </div>
+            </div>
+            <div id="overview-health"></div>
+          </article>
 
-        <article class="panel panel-compact">
-          <h2>Quarterly Attrition</h2>
-          <div id="attrition"></div>
-        </article>
+          <article class="panel panel-wide">
+            <div class="panel-heading">
+              <div>
+                <h2>Department Breakdown</h2>
+              </div>
+            </div>
+            <div id="department-breakdown"></div>
+          </article>
+        </section>
 
-        <article class="panel panel-compact">
-          <h2>Risk Register</h2>
-          <div id="risk-register"></div>
-        </article>
+        <section class="dashboard-view dashboard-grid" data-view="alerts" aria-label="Alerts" hidden>
+          <article class="panel panel-wide">
+            <div class="panel-heading">
+              <div>
+                <h2>Alerts</h2>
+              </div>
+            </div>
+            <div id="alerts"></div>
+          </article>
+        </section>
 
-        <article class="panel panel-compact">
-          <h2>HR Health Score</h2>
-          <div id="health-score"></div>
-        </article>
+        <section class="dashboard-view dashboard-grid" data-view="people" aria-label="People and drill-down" hidden>
+          <article class="panel panel-wide">
+            <div class="panel-heading">
+              <div>
+                <h2>People / Drill-Down</h2>
+              </div>
+            </div>
+            <div class="filter-grid" id="drilldown-filters">
+              <label>Region<select id="filter-region"></select></label>
+              <label>Department<select id="filter-department"></select></label>
+              <label>Reporting Manager<select id="filter-manager"></select></label>
+              <label>Employment Status<select id="filter-status"></select></label>
+            </div>
+            <div id="people-summary"></div>
+            <div id="drill-down"></div>
+          </article>
+        </section>
 
-        <article class="panel">
-          <h2>Org Chart</h2>
-          <div id="org-chart"></div>
-        </article>
+        <section class="dashboard-view dashboard-grid" data-view="org" aria-label="Org chart" hidden>
+          <article class="panel panel-wide">
+            <div class="panel-heading">
+              <div>
+                <h2>Org Chart</h2>
+              </div>
+            </div>
+            <div id="org-chart"></div>
+          </article>
+        </section>
 
-        <article class="panel panel-wide">
-          <h2>Drill-Down</h2>
-          <div class="filter-grid" id="drilldown-filters">
-            <label>Region<select id="filter-region"></select></label>
-            <label>Department<select id="filter-department"></select></label>
-            <label>Reporting Manager<select id="filter-manager"></select></label>
-            <label>Employment Status<select id="filter-status"></select></label>
-          </div>
-          <div id="drill-down"></div>
-        </article>
+        <section class="dashboard-view dashboard-grid" data-view="risk" aria-label="Risk and attrition" hidden>
+          <article class="panel panel-compact">
+            <div class="panel-heading">
+              <div>
+                <h2>Quarterly Attrition</h2>
+              </div>
+            </div>
+            <div id="attrition"></div>
+          </article>
+
+          <article class="panel panel-primary">
+            <div class="panel-heading">
+              <div>
+                <h2>Risk Register</h2>
+              </div>
+            </div>
+            <div id="risk-register"></div>
+          </article>
+        </section>
+
+        <section class="dashboard-view dashboard-grid" data-view="health" aria-label="Health score" hidden>
+          <article class="panel panel-wide">
+            <div class="panel-heading">
+              <div>
+                <h2>HR Health Score</h2>
+              </div>
+            </div>
+            <div id="health-score"></div>
+          </article>
+        </section>
       </section>
 
       <section class="error-view" id="error-view" hidden>
@@ -76,6 +152,6 @@
     <script>
       window.__INITIAL_DASHBOARD_PAYLOAD__ = <?!= initialPayload ?>;
     </script>
-    <?!= include("Client"); ?>
+    <?!= include("client"); ?>
   </body>
 </html>

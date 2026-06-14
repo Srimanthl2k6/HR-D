@@ -1,3 +1,5 @@
+var WEB_APP_READ_ONLY_LOGGING_SUPPRESSED_ = false;
+
 /**
  * Appends a log entry to the Logs tab when SpreadsheetApp is available.
  *
@@ -15,6 +17,13 @@ function appendLog(level, message, userEmail) {
     message: toHumanMessage_(message)
   };
 
+  if (WEB_APP_READ_ONLY_LOGGING_SUPPRESSED_) {
+    if (typeof console !== "undefined" && console.log) {
+      console.log("[" + entry.level + "] " + entry.message);
+    }
+    return entry;
+  }
+
   var spreadsheet = getActiveSpreadsheet_();
   if (spreadsheet) {
     var sheet = ensureSheet_(spreadsheet, HRD.TABS.LOGS);
@@ -28,6 +37,24 @@ function appendLog(level, message, userEmail) {
   }
 
   return entry;
+}
+
+/**
+ * Runs a callback without writing log rows. Used by read-only Web App requests
+ * because those requests execute as the visiting user.
+ *
+ * @param {Function} callback Work to run.
+ * @returns {*} Callback return value.
+ */
+function withWebAppReadOnlyLoggingSuppressed_(callback) {
+  var previous = WEB_APP_READ_ONLY_LOGGING_SUPPRESSED_;
+  WEB_APP_READ_ONLY_LOGGING_SUPPRESSED_ = true;
+
+  try {
+    return callback();
+  } finally {
+    WEB_APP_READ_ONLY_LOGGING_SUPPRESSED_ = previous;
+  }
 }
 
 /**

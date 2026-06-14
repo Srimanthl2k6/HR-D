@@ -1,19 +1,29 @@
+var AUTH_ALLOWED_DOMAIN = "techolution.com";
+
+// TEMPORARY DEVELOPMENT BYPASS.
+// IMPORTANT: Set AUTH_DEV_ALLOWLIST_ENABLED to false before final submission
+// if strict Techolution-only access is required.
+var AUTH_DEV_ALLOWLIST_ENABLED = false;
+var AUTH_DEV_ALLOWED_EMAILS = [
+  "srmt2k6@gmail.com"
+];
+
 /**
  * Serves the HtmlService web application.
- *
- * SEC-OS-03 NOTE: Unauthenticated requests never reach this function - they are
- * rejected by Google's infrastructure before Apps Script executes, because this
- * app is deployed with "access": "DOMAIN". Authentication failure logging is
- * therefore handled by Google Workspace Admin audit logs, not application code.
- * See: https://workspace.google.com/audit-logs
  *
  * @param {Object=} event Apps Script GET event.
  * @returns {Object} HtmlService output or local fallback object.
  */
 function doGet(event) {
+  var access = getDashboardAccess_();
   var payload;
+
+  if (!access.ok) {
+    return createPlainAccessDeniedOutput_();
+  }
+
   try {
-    payload = getDashboardData();
+    payload = buildAuthorizedDashboardPayload_(access);
   } catch (error) {
     payload = buildWebAppErrorPayload_(error);
   }
@@ -27,7 +37,7 @@ function doGet(event) {
     };
   }
 
-  var template = HtmlService.createTemplateFromFile("Index");
+  var template = HtmlService.createTemplateFromFile("index");
   template.initialPayload = toSafeJsonForScript_(payload);
 
   return template
@@ -46,16 +56,45 @@ function include(filename) {
 }
 
 /**
+ * Builds the opaque response returned before HtmlService is created for denied users.
+ *
+ * @returns {Object|string} ContentService text output in Apps Script or local fallback.
+ */
+function createPlainAccessDeniedOutput_() {
+  if (typeof ContentService !== "undefined" && ContentService.createTextOutput) {
+    return ContentService
+      .createTextOutput(getPlainAccessDeniedText_())
+      .setMimeType(ContentService.MimeType.TEXT);
+  }
+
+  return {
+    content: getPlainAccessDeniedText_(),
+    mimeType: "text/plain"
+  };
+}
+
+/**
+ * Returns the exact opaque text for denied Web App GET requests.
+ *
+ * @returns {string} Access denied text.
+ */
+function getPlainAccessDeniedText_() {
+  return "access-denied";
+}
+
+/**
  * Returns dashboard data for the Web App.
  *
  * @returns {Object} Web App dashboard payload with shape { ok, appName, generatedAt, sections, model, filters, status }.
  */
 function getDashboardData() {
-  try {
-    var config = loadConfig();
-    var data = loadAllData(config);
+  var access = getDashboardAccess_();
+  if (!access.ok) {
+    return buildAccessDeniedPayload_(access);
+  }
 
-    return buildWebAppDashboardPayload_(data, config);
+  try {
+    return buildAuthorizedDashboardPayload_(access);
   } catch (error) {
     return buildWebAppErrorPayload_(error);
   }
@@ -68,11 +107,18 @@ function getDashboardData() {
  * @returns {EmployeeRecord[]} Filtered employee rows.
  */
 function getFilteredEmployees(filters) {
-  try {
-    var config = loadConfig();
-    var data = loadAllData(config);
+  var denied = assertDashboardAccess_();
+  if (denied) {
+    return denied;
+  }
 
-    return getFilteredEmployeesFromData_(data, filters || getDefaultDrillDownFilters());
+  try {
+    return withWebAppReadOnlyLoggingSuppressed_(function() {
+      var config = loadConfig();
+      var data = loadAllData(config);
+
+      return getFilteredEmployeesFromData_(data, filters || getDefaultDrillDownFilters());
+    });
   } catch (error) {
     return buildWebAppErrorPayload_(error);
   }
@@ -84,6 +130,11 @@ function getFilteredEmployees(filters) {
  * @returns {Object} Pipeline status summary.
  */
 function getLastPipelineStatus() {
+  var denied = assertDashboardAccess_();
+  if (denied) {
+    return denied;
+  }
+
   try {
     var spreadsheet = getActiveSpreadsheet_();
     if (!spreadsheet) {
@@ -118,7 +169,7 @@ function getLastPipelineStatus() {
  * @param {Object} config Runtime configuration.
  * @returns {Object} Web App payload.
  */
-function buildWebAppDashboardPayload_(data, config) {
+function buildWebAppDashboardPayload_(data, config, userEmail) {
   var model = buildDashboardModel(data, config);
   model.drillDownRows = getFilteredEmployeesFromData_(data, getDefaultDrillDownFilters());
 
@@ -126,6 +177,7 @@ function buildWebAppDashboardPayload_(data, config) {
     ok: true,
     appName: HRD.APP.NAME,
     generatedAt: formatDateForMessage_(new Date()),
+    userEmail: userEmail || "",
     sections: [
       "KPIs",
       "Alerts",
@@ -140,6 +192,21 @@ function buildWebAppDashboardPayload_(data, config) {
     filters: getDefaultDrillDownFilters(),
     status: buildPipelineStatusPayload_(null)
   };
+}
+
+/**
+ * Builds the dashboard payload for an already-authorized Web App request.
+ *
+ * @param {Object} access Access result from getDashboardAccess_().
+ * @returns {Object} Dashboard payload.
+ */
+function buildAuthorizedDashboardPayload_(access) {
+  return withWebAppReadOnlyLoggingSuppressed_(function() {
+    var config = loadConfig();
+    var data = loadAllData(config);
+
+    return buildWebAppDashboardPayload_(data, config, access.userEmail);
+  });
 }
 
 /**
@@ -265,4 +332,110 @@ function buildWebAppErrorPayload_(error) {
     ok: false,
     message: escapeHtml(getSafeErrorMessage_(error))
   };
+}
+
+/**
+ * Normalizes an email for access control checks.
+ *
+ * @param {*} email Email value.
+ * @returns {string} Normalized email.
+ */
+function normalizeEmailForAccess_(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+/**
+ * Returns true when an email may access the Web App dashboard.
+ *
+ * @param {*} email Email value.
+ * @returns {boolean} True when allowed.
+ */
+function isAllowedDashboardEmail_(email) {
+  var normalized = normalizeEmailForAccess_(email);
+  var domainPattern = AUTH_ALLOWED_DOMAIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  if (new RegExp("^[^@\\s]+@" + domainPattern + "$", "i").test(normalized)) {
+    return true;
+  }
+
+  if (
+    AUTH_DEV_ALLOWLIST_ENABLED
+    && AUTH_DEV_ALLOWED_EMAILS.indexOf(normalized) !== -1
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks the active Apps Script user for dashboard access.
+ *
+ * @returns {Object} Access result.
+ */
+function getDashboardAccess_() {
+  var email = "";
+
+  try {
+    if (typeof Session !== "undefined" && Session.getActiveUser) {
+      email = normalizeEmailForAccess_(Session.getActiveUser().getEmail());
+    }
+  } catch (error) {
+    email = "";
+  }
+
+  if (!email) {
+    return {
+      ok: false,
+      accessDenied: true,
+      userEmail: "",
+      message: "Access denied. Google sign-in was detected, but the account email could not be verified. Please open this Web App using a Techolution Google Workspace account."
+    };
+  }
+
+  if (!isAllowedDashboardEmail_(email)) {
+    return {
+      ok: false,
+      accessDenied: true,
+      userEmail: email,
+      message: "Access denied. Please sign in using your Techolution Google Workspace account."
+    };
+  }
+
+  return {
+    ok: true,
+    accessDenied: false,
+    userEmail: email
+  };
+}
+
+/**
+ * Builds a safe access-denied payload for HtmlService clients.
+ *
+ * @param {Object=} access Access result.
+ * @returns {Object} Access-denied payload.
+ */
+function buildAccessDeniedPayload_(access) {
+  return {
+    ok: false,
+    accessDenied: true,
+    generatedAt: new Date().toISOString(),
+    userEmail: escapeHtml(access && access.userEmail ? access.userEmail : ""),
+    message: escapeHtml(access && access.message ? access.message : "Access denied.")
+  };
+}
+
+/**
+ * Returns an access-denied payload when the active user is not allowed.
+ *
+ * @returns {Object|null} Access-denied payload or null.
+ */
+function assertDashboardAccess_() {
+  var access = getDashboardAccess_();
+
+  if (!access.ok) {
+    return buildAccessDeniedPayload_(access);
+  }
+
+  return null;
 }

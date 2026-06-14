@@ -32,6 +32,9 @@ function runAllTests() {
     testWebAppSafeJsonPreventsScriptBreakout_,
     testWebAppStatusReportsPipelineResult_,
     testWebAppErrorPayloadEscapesMessages_,
+    testDashboardAccessEmailRules_,
+    testPlainAccessDeniedTextIsOpaque_,
+    testAccessDeniedPayloadEscapesMessages_,
     testRunAllTestsLogsIndividualResults_,
     testAcceptanceVerificationReportCoversRequiredChecks_,
     testQaTestDataHelpersUseUniqueTestIdsOnly_
@@ -802,6 +805,59 @@ function testWebAppErrorPayloadEscapesMessages_() {
   assertEquals(false, payload.ok, "Error payload should expose a failed state.");
   assertTrue(payload.message.indexOf("<script>") === -1, "Error payload should not include raw script tags.");
   assertTrue(payload.message.indexOf("&lt;script&gt;") !== -1, "Error payload should HTML-escape messages.");
+}
+
+/**
+ * Verifies dashboard email-domain access rules.
+ *
+ * @returns {void}
+ */
+function testDashboardAccessEmailRules_() {
+  var originalDevAllowlistEnabled = AUTH_DEV_ALLOWLIST_ENABLED;
+
+  try {
+    AUTH_DEV_ALLOWLIST_ENABLED = true;
+
+    assertTrue(isAllowedDashboardEmail_("aadish.jain@techolution.com"), "Techolution reviewer should be allowed.");
+    assertTrue(isAllowedDashboardEmail_("USER@TECHOLUTION.COM"), "Techolution domain matching should be case-insensitive.");
+    assertTrue(isAllowedDashboardEmail_("srmt2k6@gmail.com"), "Development allowlist should allow srmt2k6@gmail.com when enabled.");
+    assertEquals(false, isAllowedDashboardEmail_("person@gmail.com"), "Personal Gmail should be denied.");
+    assertEquals(false, isAllowedDashboardEmail_("fake@techolution.com.evil.com"), "Lookalike nested domain should be denied.");
+    assertEquals(false, isAllowedDashboardEmail_("abc@techoution.com"), "Misspelled Techolution domain should be denied.");
+    assertEquals(false, isAllowedDashboardEmail_(""), "Blank email should be denied.");
+
+    AUTH_DEV_ALLOWLIST_ENABLED = false;
+    assertEquals(false, isAllowedDashboardEmail_("srmt2k6@gmail.com"), "Development Gmail should be denied when dev allowlist is disabled.");
+  } finally {
+    AUTH_DEV_ALLOWLIST_ENABLED = originalDevAllowlistEnabled;
+  }
+}
+
+/**
+ * Verifies denied GET requests use an opaque text body.
+ *
+ * @returns {void}
+ */
+function testPlainAccessDeniedTextIsOpaque_() {
+  assertEquals("access-denied", getPlainAccessDeniedText_(), "Denied GET response text should be opaque.");
+}
+
+/**
+ * Verifies access-denied payloads are safe for HtmlService clients.
+ *
+ * @returns {void}
+ */
+function testAccessDeniedPayloadEscapesMessages_() {
+  var payload = buildAccessDeniedPayload_({
+    userEmail: "Bad<User>@gmail.com",
+    message: "Access <script>denied</script>."
+  });
+
+  assertEquals(false, payload.ok, "Access denied payload should expose a failed state.");
+  assertTrue(payload.accessDenied, "Access denied payload should expose accessDenied.");
+  assertTrue(payload.message.indexOf("<script>") === -1, "Access denied payload should not include raw script tags.");
+  assertTrue(payload.message.indexOf("&lt;script&gt;") !== -1, "Access denied payload should HTML-escape messages.");
+  assertTrue(payload.userEmail.indexOf("<") === -1, "Access denied payload should HTML-escape user email.");
 }
 
 /**

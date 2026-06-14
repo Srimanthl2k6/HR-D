@@ -5,8 +5,22 @@
     var errorView = document.getElementById("error-view");
     var errorMessage = document.getElementById("error-message");
     var themeToggle = document.getElementById("theme-toggle");
+    var validViews = {
+      overview: true,
+      alerts: true,
+      people: true,
+      org: true,
+      risk: true,
+      health: true
+    };
+    var navButtons = [];
+    var views = [];
+    var pollingDisabled = false;
     var state = {
       payload: window.__INITIAL_DASHBOARD_PAYLOAD__ || null,
+      currentView: "overview",
+      hasRendered: false,
+      isLoading: false,
       filters: {
         region: "All",
         department: "All",
@@ -60,6 +74,54 @@
       applyTheme(nextTheme);
     }
 
+    function initNavigation() {
+      navButtons = Array.prototype.slice.call(document.querySelectorAll("[data-view-target]"));
+      views = Array.prototype.slice.call(document.querySelectorAll("[data-view]"));
+      navButtons.forEach(function(button) {
+        if (button.dataset.ready === "true") {
+          return;
+        }
+        button.addEventListener("click", function() {
+          setActiveView(button.getAttribute("data-view-target"));
+        });
+        button.dataset.ready = "true";
+      });
+      window.addEventListener("hashchange", handleHashChange);
+      if (!window.location.hash && window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", "#overview");
+      }
+      setActiveView(getViewFromHash(), true);
+    }
+
+    function getViewFromHash() {
+      var value = String(window.location.hash || "").replace(/^#/, "");
+      return validViews[value] ? value : "overview";
+    }
+
+    function handleHashChange() {
+      setActiveView(getViewFromHash(), true);
+    }
+
+    function setActiveView(viewName, skipHashUpdate) {
+      var nextView = validViews[viewName] ? viewName : "overview";
+      state.currentView = nextView;
+
+      views.forEach(function(section) {
+        var active = section.getAttribute("data-view") === nextView;
+        section.hidden = !active;
+        section.setAttribute("aria-hidden", active ? "false" : "true");
+      });
+
+      navButtons.forEach(function(button) {
+        var active = button.getAttribute("data-view-target") === nextView;
+        button.setAttribute("aria-current", active ? "page" : "false");
+      });
+
+      if (!skipHashUpdate && window.location.hash !== "#" + nextView) {
+        window.location.hash = nextView;
+      }
+    }
+
     if (themeToggle) {
       themeToggle.addEventListener("click", toggleTheme);
     }
@@ -71,14 +133,21 @@
       }
     }
 
-    function setText(id, value) {
-      var element = document.getElementById(id);
-      if (element) {
-        element.textContent = value == null ? "" : String(value);
+    function setLoadingState(isLoading) {
+      state.isLoading = Boolean(isLoading);
+      if (root) {
+        root.setAttribute("aria-busy", state.isLoading ? "true" : "false");
+      }
+      if (document.body && document.body.classList) {
+        document.body.classList.toggle("is-loading", state.isLoading);
       }
     }
 
     function showError(error) {
+      setLoadingState(false);
+      if (error && error.accessDenied) {
+        pollingDisabled = true;
+      }
       if (root) {
         root.hidden = true;
       }
@@ -86,9 +155,13 @@
         errorView.hidden = false;
       }
       if (errorMessage) {
-        errorMessage.textContent = error && error.message ? error.message : "Unable to refresh dashboard data.";
+        var message = error && error.message ? error.message : "Unable to refresh dashboard data.";
+        if (error && error.accessDenied && error.userEmail) {
+          message += " Signed in as: " + error.userEmail;
+        }
+        errorMessage.textContent = message;
       }
-      setStatus("Dashboard error.");
+      setStatus(error && error.accessDenied ? "Access denied." : "Dashboard error.");
     }
 
     function hideError() {
@@ -101,7 +174,8 @@
     }
 
     function renderDashboard(payload) {
-      if (payload && payload.ok === false) {
+      setLoadingState(false);
+      if (payload && (payload.ok === false || payload.accessDenied === true)) {
         showError(payload);
         return;
       }
@@ -113,10 +187,15 @@
 
       hideError();
       state.payload = payload;
-      state.filters = payload.filters || state.filters;
-      var model = payload.model;
+      if (!state.hasRendered && payload.filters) {
+        state.filters = normalizeFilters(payload.filters);
+      }
 
-      renderKpis(model.kpis || {});
+      var model = payload.model;
+      var drillRows = filterRowsLocally(model.drillDownRows || [], state.filters);
+
+      renderOverview(model);
+      renderKpis(model.kpis || {}, model);
       renderAlerts(model.lwdAlerts || [], model.probationAlerts || []);
       renderDepartmentBreakdown(model.departmentBreakdown || []);
       renderAttrition(model.attrition || {});
@@ -124,12 +203,82 @@
       renderHealthScore(model.healthScore || {});
       renderOrgChart(model.orgChart || {});
       configureFilters(model.drillDownRows || []);
-      renderDrillDownRows(model.drillDownRows || []);
+      renderDrillDownRows(drillRows);
+      state.hasRendered = true;
       setStatus("Last updated " + (payload.generatedAt || ""));
     }
 
-    function renderKpis(kpis) {
-      renderKeyValueList("kpi-strip", [
+    function renderOverview(model) {
+      var target = clearNode("overview-summary");
+      if (!target) {
+        return;
+      }
+
+      var kpis = model.kpis || {};
+      var statusCounts = kpis.statusHeadcount || {};
+      var regionCounts = kpis.regionHeadcount || {};
+      var openAlerts = (model.lwdAlerts || []).length + (model.probationAlerts || []).length;
+      var grid = createElement("div", "overview-card-grid");
+
+      [
+        ["Total Headcount", formatNumber(kpis.totalHeadcount || 0), "Current active workforce", "strong"],
+        ["India / US", formatNumber(regionCounts.India || 0) + " / " + formatNumber(regionCounts.US || 0), "Regional distribution", "neutral"],
+        ["Confirmed", formatNumber(statusCounts.Confirmed || 0), "Employees with confirmed status", "neutral"],
+        ["Probation / Intern", formatNumber(statusCounts["Under Probation"] || 0) + " / " + formatNumber(statusCounts.Intern || 0), "Watchlist employment groups", "warning"],
+        ["Open Alerts", formatNumber(openAlerts), "LWD and probation alerts", openAlerts ? "danger" : "good"],
+        ["Active Risks", formatNumber(kpis.activeRiskCount || 0), "Risk items not closed", kpis.activeRiskCount ? "warning" : "good"]
+      ].forEach(function(card) {
+        grid.appendChild(createMetricCard(card[0], card[1], card[2], card[3]));
+      });
+
+      target.appendChild(grid);
+      renderOverviewHealth(model.healthScore || {});
+    }
+
+    function renderOverviewHealth(healthScore) {
+      var target = clearNode("overview-health");
+      if (!target) {
+        return;
+      }
+      var layout = createElement("div", "overview-health-layout");
+      layout.appendChild(renderHealthGauge(healthScore, "compact"));
+      layout.appendChild(renderComponentBars(healthScore.components || {}, true));
+      target.appendChild(layout);
+    }
+
+    function renderKpis(kpis, model) {
+      var target = clearNode("kpi-strip");
+      if (!target) {
+        return;
+      }
+      target.appendChild(renderKpiCards(kpis, model || {}));
+      target.appendChild(createDetailHeading("KPI detail"));
+      target.appendChild(buildTableBlock(["Metric", "Value"], buildKpiDetailRows(kpis)));
+    }
+
+    function renderKpiCards(kpis, model) {
+      var statusCounts = kpis.statusHeadcount || {};
+      var regionCounts = kpis.regionHeadcount || {};
+      var openAlerts = ((model.lwdAlerts || []).length) + ((model.probationAlerts || []).length);
+      var grid = createElement("div", "kpi-card-grid");
+      [
+        ["Total Headcount", formatNumber(kpis.totalHeadcount || 0), "All active employee records", "strong"],
+        ["India", formatNumber(regionCounts.India || 0), "India region", "neutral"],
+        ["US", formatNumber(regionCounts.US || 0), "US region", "neutral"],
+        ["Confirmed", formatNumber(statusCounts.Confirmed || 0), "Confirmed employees", "good"],
+        ["Under Probation", formatNumber(statusCounts["Under Probation"] || 0), "Needs confirmation tracking", "warning"],
+        ["Intern", formatNumber(statusCounts.Intern || 0), "Intern population", "neutral"],
+        ["Open Alerts", formatNumber(openAlerts), "LWD plus probation", openAlerts ? "danger" : "good"],
+        ["Active Risks", formatNumber(kpis.activeRiskCount || 0), "Open risk records", kpis.activeRiskCount ? "warning" : "good"],
+        ["Productivity Flags", formatNumber(kpis.productivityFlagCount || 0), "Below configured target", kpis.productivityFlagCount ? "warning" : "good"]
+      ].forEach(function(card) {
+        grid.appendChild(createMetricCard(card[0], card[1], card[2], card[3]));
+      });
+      return grid;
+    }
+
+    function buildKpiDetailRows(kpis) {
+      return [
         ["Total Headcount", kpis.totalHeadcount || 0],
         ["India", (kpis.regionHeadcount || {}).India || 0],
         ["US", (kpis.regionHeadcount || {}).US || 0],
@@ -138,76 +287,314 @@
         ["Intern", (kpis.statusHeadcount || {}).Intern || 0],
         ["Productivity Flags", kpis.productivityFlagCount || 0],
         ["Active Risk Items", kpis.activeRiskCount || 0]
-      ]);
+      ];
     }
 
     function renderAlerts(lwdAlerts, probationAlerts) {
-      renderTable("alerts", ["Type", "Employee ID", "Name", "Department", "Date", "Severity"], lwdAlerts.concat(probationAlerts).map(function(alert) {
+      var target = clearNode("alerts");
+      if (!target) {
+        return;
+      }
+      target.appendChild(renderAlertCards(lwdAlerts, probationAlerts));
+      target.appendChild(createDetailHeading("Alert detail"));
+      target.appendChild(buildTableBlock(["Type", "Employee ID", "Name", "Department", "Date", "Severity"], lwdAlerts.concat(probationAlerts).map(function(alert) {
         return [alert.type, alert.employeeId, alert.name, alert.department, alert.relevantDate, alert.severity];
-      }));
+      })));
+    }
+
+    function renderAlertCards(lwdAlerts, probationAlerts) {
+      var container = createElement("div", "alert-board");
+      var allAlerts = lwdAlerts.concat(probationAlerts);
+      var summary = createElement("div", "alert-summary-grid");
+      summary.appendChild(createMetricCard("Open Alerts", formatNumber(allAlerts.length), "All active alert records", allAlerts.length ? "danger" : "good"));
+      summary.appendChild(createMetricCard("Intern LWD", formatNumber(lwdAlerts.length), "Intern last working day", lwdAlerts.length ? "warning" : "good"));
+      summary.appendChild(createMetricCard("Probation", formatNumber(probationAlerts.length), "Confirmation windows", probationAlerts.length ? "warning" : "good"));
+      container.appendChild(summary);
+
+      var list = createElement("div", "alert-card-list");
+      if (!allAlerts.length) {
+        list.appendChild(createEmptyStateNode("No active LWD or probation alerts."));
+      }
+
+      allAlerts.forEach(function(alert) {
+        var severity = String(alert.severity || "normal").toLowerCase();
+        var card = createElement("article", "alert-card alert-" + severity);
+        var top = createElement("div", "alert-card-top");
+        top.appendChild(createBadge(alert.type || "Alert", "badge"));
+        top.appendChild(createBadge(severity || "normal", "badge badge-" + severity));
+        card.appendChild(top);
+        card.appendChild(createElement("h3", "", alert.name || "Unnamed employee"));
+        card.appendChild(createElement("p", "alert-meta", textValue(alert.employeeId) + " | " + textValue(alert.department)));
+        card.appendChild(createElement("p", "alert-date", textValue(alert.relevantDate)));
+        if (alert.message) {
+          card.appendChild(createElement("p", "alert-message", alert.message));
+        }
+        list.appendChild(card);
+      });
+
+      container.appendChild(list);
+      return container;
     }
 
     function renderDepartmentBreakdown(rows) {
-      renderTable("department-breakdown", ["Department", "Headcount", "Confirmed", "Under Probation", "Intern"], rows.map(function(row) {
-        var status = row.statusHeadcount || {};
-        return [row.department, row.headcount, status.Confirmed || 0, status["Under Probation"] || 0, status.Intern || 0];
-      }));
+      var target = clearNode("department-breakdown");
+      if (!target) {
+        return;
+      }
+      target.appendChild(renderDepartmentBars(rows));
+      target.appendChild(createDetailHeading("Department detail"));
+      target.appendChild(buildTableBlock(["Department", "Headcount", "Confirmed", "Under Probation", "Intern"], rows.map(function(row) {
+        var statusCounts = row.statusHeadcount || {};
+        return [row.department, row.headcount, statusCounts.Confirmed || 0, statusCounts["Under Probation"] || 0, statusCounts.Intern || 0];
+      })));
+    }
+
+    function renderDepartmentBars(rows) {
+      var container = createElement("div", "bar-list department-bars");
+      if (!rows.length) {
+        container.appendChild(createEmptyStateNode("No department records."));
+        return container;
+      }
+
+      var maxHeadcount = rows.reduce(function(max, row) {
+        return Math.max(max, safeNumber(row.headcount));
+      }, 1);
+
+      rows.forEach(function(row) {
+        var statusCounts = row.statusHeadcount || {};
+        var caption = "Confirmed " + formatNumber(statusCounts.Confirmed || 0)
+          + " | Probation " + formatNumber(statusCounts["Under Probation"] || 0)
+          + " | Intern " + formatNumber(statusCounts.Intern || 0);
+        container.appendChild(createBarRow(row.department || "Unspecified", row.headcount || 0, maxHeadcount, caption, "accent"));
+      });
+
+      return container;
     }
 
     function renderAttrition(attrition) {
-      renderKeyValueList("attrition", [
+      var target = clearNode("attrition");
+      if (!target) {
+        return;
+      }
+      target.appendChild(renderAttritionVisual(attrition));
+      target.appendChild(createDetailHeading("Attrition detail"));
+      target.appendChild(buildTableBlock(["Metric", "Value"], [
         ["Quarter", attrition.currentQuarter || ""],
         ["Exits", attrition.exits || 0],
-        ["Rate", (attrition.rate || 0) + "%"]
-      ]);
+        ["Denominator", attrition.denominator || ""],
+        ["Rate", formatPercent(attrition.rate || 0)]
+      ]));
+    }
+
+    function renderAttritionVisual(attrition) {
+      var container = createElement("div", "attrition-visual");
+      var rate = clamp(safeNumber(attrition.rate), 0, 100);
+      var metricRow = createElement("div", "attrition-metrics");
+      metricRow.appendChild(createMetricCard("Quarter", attrition.currentQuarter || "Current", "Live offboarded rows", "neutral"));
+      metricRow.appendChild(createMetricCard("Exits", formatNumber(attrition.exits || 0), "Current-quarter exits", attrition.exits ? "warning" : "good"));
+      metricRow.appendChild(createMetricCard("Rate", formatPercent(rate), "Quarter attrition", rate > 0 ? "warning" : "good"));
+      container.appendChild(metricRow);
+      container.appendChild(createBarRow("Attrition Rate", rate, 100, formatNumber(attrition.exits || 0) + " exits from " + formatNumber(attrition.denominator || 0), "warning"));
+      return container;
     }
 
     function renderRiskRegister(summary) {
+      var target = clearNode("risk-register");
+      if (!target) {
+        return;
+      }
       var rows = [];
       Object.keys(summary.byCategory || {}).forEach(function(key) { rows.push(["Category", key, summary.byCategory[key]]); });
       Object.keys(summary.byLevel || {}).forEach(function(key) { rows.push(["Level", key, summary.byLevel[key]]); });
       Object.keys(summary.byStatus || {}).forEach(function(key) { rows.push(["Status", key, summary.byStatus[key]]); });
-      renderTable("risk-register", ["Group", "Name", "Count"], rows);
+      target.appendChild(renderRiskVisuals(summary));
+      target.appendChild(createDetailHeading("Risk detail"));
+      target.appendChild(buildTableBlock(["Group", "Name", "Count"], rows));
+    }
+
+    function renderRiskVisuals(summary) {
+      var container = createElement("div", "risk-visual-grid");
+      var groups = [
+        ["Category", summary.byCategory || {}],
+        ["Level", summary.byLevel || {}],
+        ["Status", summary.byStatus || {}]
+      ];
+      var hasAny = false;
+
+      groups.forEach(function(group) {
+        var entries = objectEntries(group[1]);
+        var section = createElement("section", "risk-group");
+        section.appendChild(createElement("h3", "", group[0]));
+        if (!entries.length) {
+          section.appendChild(createEmptyStateNode("No " + group[0].toLowerCase() + " records."));
+        } else {
+          hasAny = true;
+          var maxCount = entries.reduce(function(max, entry) {
+            return Math.max(max, safeNumber(entry.value));
+          }, 1);
+          entries.forEach(function(entry) {
+            section.appendChild(createBarRow(entry.key, entry.value, maxCount, formatNumber(entry.value) + " records", "accent"));
+          });
+        }
+        container.appendChild(section);
+      });
+
+      if (!hasAny) {
+        container.className += " risk-empty";
+      }
+      return container;
     }
 
     function renderHealthScore(healthScore) {
-      var rows = [["Score", healthScore.score || 0]];
-      Object.keys(healthScore.components || {}).forEach(function(key) {
-        var component = healthScore.components[key] || {};
-        rows.push([
-          key,
-          "Value: " + (component.value || 0) +
-            ", Weight: " + (component.weight || 0) +
-            ", Score: " + (component.score || 0) +
-            ", Weighted: " + (component.weightedScore || 0)
-        ]);
-      });
-      renderKeyValueList("health-score", rows);
-    }
-
-    function renderOrgChart(orgChart) {
-      renderTable("org-chart", ["Manager", "Employee", "Emp ID"], (orgChart.managers || []).map(function(row) {
-        return [row.reportingManager, row.name, row.employeeId];
-      }));
-    }
-
-    function renderDrillDownRows(rows) {
-      renderTable("drill-down", ["Emp ID", "Name", "Region", "Department", "Manager", "Status"], rows.map(function(row) {
-        return [row.employeeId, row.name, row.region, row.department, row.reportingManager, row.employmentStatus];
-      }));
-    }
-
-    function renderKeyValueList(id, rows) {
-      renderTable(id, ["Metric", "Value"], rows);
-    }
-
-    function renderTable(id, headers, rows) {
-      var target = document.getElementById(id);
+      var target = clearNode("health-score");
       if (!target) {
         return;
       }
-      target.textContent = "";
+      var layout = createElement("div", "health-layout");
+      layout.appendChild(renderHealthGauge(healthScore, "large"));
+      layout.appendChild(renderComponentBars(healthScore.components || {}, false));
+      target.appendChild(layout);
+      target.appendChild(createDetailHeading("Score detail"));
+      target.appendChild(buildTableBlock(["Component", "Value", "Weight", "Score", "Weighted Score"], buildHealthRows(healthScore)));
+    }
+
+    function renderHealthGauge(healthScore, variant) {
+      var score = clamp(safeNumber(healthScore.score), 0, 100);
+      var gauge = createElement("div", "health-gauge health-gauge-" + (variant || "large"));
+      gauge.style.setProperty("--score-angle", (score * 3.6) + "deg");
+      gauge.setAttribute("role", "img");
+      gauge.setAttribute("aria-label", "HR health score " + formatScore(score) + " out of 100");
+      var center = createElement("div", "health-gauge-center");
+      center.appendChild(createElement("strong", "", formatScore(score)));
+      center.appendChild(createElement("span", "", "of 100"));
+      gauge.appendChild(center);
+      return gauge;
+    }
+
+    function renderComponentBars(components, compact) {
+      var container = createElement("div", compact ? "component-bars component-bars-compact" : "component-bars");
+      var entries = objectEntries(components);
+      if (!entries.length) {
+        container.appendChild(createEmptyStateNode("No score component data."));
+        return container;
+      }
+
+      entries.forEach(function(entry) {
+        var component = entry.value || {};
+        var score = clamp(safeNumber(component.score), 0, 100);
+        var caption = "Weight " + formatNumber(component.weight || 0) + "% | Value " + formatNumber(component.value || 0);
+        container.appendChild(createBarRow(humanizeKey(entry.key), score, 100, caption, "accent"));
+      });
+
+      return container;
+    }
+
+    function buildHealthRows(healthScore) {
+      var rows = [["Overall Score", healthScore.score || 0, "", "", ""]];
+      Object.keys(healthScore.components || {}).forEach(function(key) {
+        var component = healthScore.components[key] || {};
+        rows.push([
+          humanizeKey(key),
+          component.value || 0,
+          (component.weight || 0) + "%",
+          component.score || 0,
+          component.weightedScore || 0
+        ]);
+      });
+      return rows;
+    }
+
+    function renderOrgChart(orgChart) {
+      var target = clearNode("org-chart");
+      if (!target) {
+        return;
+      }
+      var rows = orgChart.managers || [];
+      target.appendChild(renderOrgGroups(rows));
+      target.appendChild(createDetailHeading("Org detail"));
+      target.appendChild(buildTableBlock(["Manager", "Employee", "Emp ID"], rows.map(function(row) {
+        return [row.reportingManager, row.name, row.employeeId];
+      })));
+    }
+
+    function renderOrgGroups(rows) {
+      var container = createElement("div", "org-group-grid");
+      if (!rows.length) {
+        container.appendChild(createEmptyStateNode("No reporting manager records."));
+        return container;
+      }
+
+      var groups = {};
+      rows.forEach(function(row) {
+        var manager = row.reportingManager || "Unassigned";
+        if (!groups[manager]) {
+          groups[manager] = [];
+        }
+        groups[manager].push(row);
+      });
+
+      Object.keys(groups).sort().forEach(function(manager) {
+        var members = groups[manager].slice().sort(function(left, right) {
+          return String(left.name || "").localeCompare(String(right.name || ""));
+        });
+        var card = createElement("article", "org-group-card");
+        card.appendChild(createElement("h3", "", manager));
+        card.appendChild(createElement("p", "org-count", formatNumber(members.length) + " direct reports"));
+        var list = createElement("div", "org-member-list");
+        members.slice(0, 6).forEach(function(member) {
+          list.appendChild(createElement("span", "org-member", textValue(member.name) + " (" + textValue(member.employeeId) + ")"));
+        });
+        if (members.length > 6) {
+          list.appendChild(createElement("span", "org-member org-member-more", "+" + formatNumber(members.length - 6) + " more"));
+        }
+        card.appendChild(list);
+        container.appendChild(card);
+      });
+
+      return container;
+    }
+
+    function renderDrillDownRows(rows) {
+      renderPeopleSummary(rows);
+      var target = clearNode("drill-down");
+      if (!target) {
+        return;
+      }
+      target.appendChild(buildTableBlock(["Emp ID", "Name", "Region", "Department", "Manager", "Status"], rows.map(function(row) {
+        return [row.employeeId, row.name, row.region, row.department, row.reportingManager, row.employmentStatus];
+      })));
+    }
+
+    function renderPeopleSummary(rows) {
+      var target = clearNode("people-summary");
+      if (!target) {
+        return;
+      }
+      var grid = createElement("div", "people-summary-grid");
+      grid.appendChild(createMetricCard("Visible Employees", formatNumber(rows.length), "Current filter result", "strong"));
+      grid.appendChild(createMetricCard("Regions", formatNumber(uniqueValues(rows, "region").length), "Represented in results", "neutral"));
+      grid.appendChild(createMetricCard("Departments", formatNumber(uniqueValues(rows, "department").length), "Represented in results", "neutral"));
+      grid.appendChild(createMetricCard("Managers", formatNumber(uniqueValues(rows, "reportingManager").length), "Reporting managers shown", "neutral"));
+      target.appendChild(grid);
+    }
+
+    function renderTable(id, headers, rows) {
+      var target = clearNode(id);
+      if (!target) {
+        return;
+      }
+      target.appendChild(buildTableBlock(headers, rows));
+    }
+
+    function buildTableBlock(headers, rows) {
+      var wrapper = createElement("div", "table-wrap");
+      wrapper.appendChild(buildTable(headers, rows));
+      return wrapper;
+    }
+
+    function buildTable(headers, rows) {
       var table = document.createElement("table");
+      table.className = "data-table";
       var thead = document.createElement("thead");
       var headerRow = document.createElement("tr");
       headers.forEach(function(header) {
@@ -217,6 +604,7 @@
       });
       thead.appendChild(headerRow);
       table.appendChild(thead);
+
       var tbody = document.createElement("tbody");
       if (!rows.length) {
         var emptyRow = document.createElement("tr");
@@ -226,6 +614,7 @@
         emptyRow.appendChild(emptyCell);
         tbody.appendChild(emptyRow);
       }
+
       rows.forEach(function(row) {
         var tr = document.createElement("tr");
         applyRowStateClass(tr, row);
@@ -236,8 +625,9 @@
         });
         tbody.appendChild(tr);
       });
+
       table.appendChild(tbody);
-      target.appendChild(table);
+      return table;
     }
 
     function applyRowStateClass(rowElement, row) {
@@ -253,7 +643,7 @@
     }
 
     function configureFilters(rows) {
-      setSelectOptions("filter-region", ["All", "India", "US"], state.filters.region);
+      setSelectOptions("filter-region", ["All"].concat(uniqueValues(rows, "region")), state.filters.region);
       setSelectOptions("filter-department", ["All"].concat(uniqueValues(rows, "department")), state.filters.department);
       setSelectOptions("filter-manager", ["All"].concat(uniqueValues(rows, "reportingManager")), state.filters.reportingManager);
       setSelectOptions("filter-status", ["All", "Confirmed", "Under Probation", "Intern"], state.filters.employmentStatus);
@@ -264,16 +654,17 @@
       if (!select) {
         return;
       }
+      var cleanValues = dedupeValues(values);
       var currentValue = selected || select.value || "All";
       select.textContent = "";
-      values.forEach(function(value) {
+      cleanValues.forEach(function(value) {
         var option = document.createElement("option");
         option.value = value;
         option.textContent = value;
         option.selected = value === currentValue;
         select.appendChild(option);
       });
-      if (values.indexOf(currentValue) === -1) {
+      if (cleanValues.indexOf(currentValue) === -1) {
         select.value = "All";
       }
       if (select.dataset.ready !== "true") {
@@ -292,6 +683,20 @@
       return Object.keys(seen).sort();
     }
 
+    function dedupeValues(values) {
+      var seen = {};
+      var result = [];
+      values.forEach(function(value) {
+        var key = textValue(value);
+        if (!key || seen[key]) {
+          return;
+        }
+        seen[key] = true;
+        result.push(key);
+      });
+      return result;
+    }
+
     function collectFilters() {
       return {
         region: getSelectValue("filter-region", "All"),
@@ -306,14 +711,41 @@
       return select ? select.value : fallback;
     }
 
+    function normalizeFilters(filters) {
+      return {
+        region: filters.region || "All",
+        department: filters.department || "All",
+        reportingManager: filters.reportingManager || "All",
+        employmentStatus: filters.employmentStatus || "All"
+      };
+    }
+
+    function filterRowsLocally(rows, filters) {
+      var activeFilters = normalizeFilters(filters || {});
+      return (rows || []).filter(function(row) {
+        return (activeFilters.region === "All" || row.region === activeFilters.region)
+          && (activeFilters.department === "All" || row.department === activeFilters.department)
+          && (activeFilters.reportingManager === "All" || row.reportingManager === activeFilters.reportingManager)
+          && (activeFilters.employmentStatus === "All" || row.employmentStatus === activeFilters.employmentStatus);
+      });
+    }
+
     function refreshFilteredRows() {
-      state.filters = collectFilters();
-      if (!window.google || !google.script || !google.script.run) {
+      if (pollingDisabled) {
         return;
       }
+      state.filters = collectFilters();
+      if (!window.google || !google.script || !google.script.run) {
+        if (state.payload && state.payload.model) {
+          renderDrillDownRows(filterRowsLocally(state.payload.model.drillDownRows || [], state.filters));
+        }
+        return;
+      }
+      setLoadingState(true);
       google.script.run
         .withSuccessHandler(function(response) {
-          if (response && response.ok === false) {
+          setLoadingState(false);
+          if (response && (response.ok === false || response.accessDenied === true)) {
             showError(response);
             return;
           }
@@ -324,17 +756,138 @@
     }
 
     function refreshDashboard() {
+      if (pollingDisabled) {
+        return;
+      }
       if (!window.google || !google.script || !google.script.run) {
         renderDashboard(state.payload);
         return;
       }
 
+      setLoadingState(true);
       google.script.run
         .withSuccessHandler(renderDashboard)
         .withFailureHandler(showError)
         .getDashboardData();
     }
 
+    function createMetricCard(label, value, caption, tone) {
+      var card = createElement("article", "metric-card metric-card-" + (tone || "neutral"));
+      card.appendChild(createElement("p", "metric-label", label));
+      card.appendChild(createElement("strong", "metric-value", value));
+      card.appendChild(createElement("span", "metric-caption", caption));
+      return card;
+    }
+
+    function createBarRow(label, value, maxValue, caption, tone) {
+      var row = createElement("div", "bar-row bar-row-" + (tone || "accent"));
+      var top = createElement("div", "bar-row-top");
+      top.appendChild(createElement("span", "bar-label", label));
+      top.appendChild(createElement("strong", "bar-value", formatNumber(value)));
+      row.appendChild(top);
+
+      var track = createElement("div", "bar-track");
+      var fill = createElement("div", "bar-fill");
+      var percent = maxValue > 0 ? clamp((safeNumber(value) / safeNumber(maxValue)) * 100, 0, 100) : 0;
+      fill.style.width = percent + "%";
+      track.appendChild(fill);
+      row.appendChild(track);
+
+      if (caption) {
+        row.appendChild(createElement("p", "bar-caption", caption));
+      }
+      return row;
+    }
+
+    function createBadge(text, className) {
+      return createElement("span", className || "badge", text);
+    }
+
+    function createDetailHeading(text) {
+      return createElement("h3", "detail-heading", text);
+    }
+
+    function createEmptyStateNode(message) {
+      var node = createElement("div", "empty-state");
+      node.appendChild(createElement("strong", "", message || "No records"));
+      return node;
+    }
+
+    function renderEmptyState(targetId, message) {
+      var target = clearNode(targetId);
+      if (target) {
+        target.appendChild(createEmptyStateNode(message));
+      }
+    }
+
+    function createElement(tagName, className, text) {
+      var element = document.createElement(tagName);
+      if (className) {
+        element.className = className;
+      }
+      if (text !== undefined && text !== null) {
+        element.textContent = String(text);
+      }
+      return element;
+    }
+
+    function clearNode(nodeOrId) {
+      var target = typeof nodeOrId === "string" ? document.getElementById(nodeOrId) : nodeOrId;
+      if (target) {
+        target.textContent = "";
+      }
+      return target;
+    }
+
+    function objectEntries(object) {
+      return Object.keys(object || {}).sort().map(function(key) {
+        return {
+          key: key,
+          value: object[key]
+        };
+      });
+    }
+
+    function textValue(value) {
+      return value == null ? "" : String(value);
+    }
+
+    function safeNumber(value) {
+      var number = Number(value);
+      return isFinite(number) ? number : 0;
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, safeNumber(value)));
+    }
+
+    function formatNumber(value) {
+      var number = safeNumber(value);
+      if (number % 1 === 0) {
+        return String(number);
+      }
+      return String(Math.round(number * 100) / 100);
+    }
+
+    function formatPercent(value) {
+      return formatScore(value) + "%";
+    }
+
+    function formatScore(value) {
+      var number = Math.round(safeNumber(value) * 100) / 100;
+      return String(number).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+    }
+
+    function humanizeKey(key) {
+      return String(key || "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/[_-]+/g, " ")
+        .replace(/\b\w/g, function(character) {
+          return character.toUpperCase();
+        });
+    }
+
+    initNavigation();
     renderDashboard(state.payload);
     window.setInterval(refreshDashboard, 5000);
   })();
