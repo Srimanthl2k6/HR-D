@@ -4,6 +4,7 @@
     var status = document.getElementById("status");
     var errorView = document.getElementById("error-view");
     var errorMessage = document.getElementById("error-message");
+    var themeToggle = document.getElementById("theme-toggle");
     var state = {
       payload: window.__INITIAL_DASHBOARD_PAYLOAD__ || null,
       filters: {
@@ -13,6 +14,56 @@
         employmentStatus: "All"
       }
     };
+
+    function getStoredTheme() {
+      try {
+        return window.localStorage ? localStorage.getItem("hrd-theme") : "";
+      } catch (error) {
+        return "";
+      }
+    }
+
+    function storeTheme(theme) {
+      try {
+        if (window.localStorage) {
+          localStorage.setItem("hrd-theme", theme);
+        }
+      } catch (error) {
+        return;
+      }
+    }
+
+    function getPreferredTheme() {
+      var stored = getStoredTheme();
+      if (stored === "light" || stored === "dark") {
+        return stored;
+      }
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        return "dark";
+      }
+      return "light";
+    }
+
+    function applyTheme(theme) {
+      var selectedTheme = theme === "dark" ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", selectedTheme);
+      if (themeToggle) {
+        themeToggle.textContent = "Theme: " + (selectedTheme === "dark" ? "Dark" : "Light");
+        themeToggle.setAttribute("aria-pressed", selectedTheme === "dark" ? "true" : "false");
+      }
+    }
+
+    function toggleTheme() {
+      var currentTheme = document.documentElement.getAttribute("data-theme") || getPreferredTheme();
+      var nextTheme = currentTheme === "dark" ? "light" : "dark";
+      storeTheme(nextTheme);
+      applyTheme(nextTheme);
+    }
+
+    if (themeToggle) {
+      themeToggle.addEventListener("click", toggleTheme);
+    }
+    applyTheme(getPreferredTheme());
 
     function setStatus(message) {
       if (status) {

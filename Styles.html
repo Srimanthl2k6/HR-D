@@ -1,18 +1,65 @@
 <style>
   :root {
-    --background: #f3f5f7;
+    --background: #f6f7f9;
+    --dot: rgba(23, 33, 47, 0.12);
+    --shell: #ffffff;
     --surface: #ffffff;
-    --surface-subtle: #f8fafc;
-    --text: #17212f;
-    --muted: #5b6472;
-    --border: #d6dde8;
-    --accent: #0f6b5f;
-    --accent-soft: #e8f4f1;
+    --surface-subtle: #f1f3f6;
+    --text: #151922;
+    --muted: #657080;
+    --border: #d9dee7;
+    --accent: #101827;
+    --accent-text: #ffffff;
     --danger: #a11f1f;
     --danger-soft: #fff1f1;
-    --warning: #9a5a00;
+    --warning: #915c00;
     --warning-soft: #fff7df;
-    --shadow: 0 12px 30px rgba(16, 24, 40, 0.08);
+    --shadow: 0 24px 70px rgba(16, 24, 40, 0.12);
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      --background: #08090b;
+      --dot: rgba(255, 255, 255, 0.16);
+      --shell: #111111;
+      --surface: #121212;
+      --surface-subtle: #1a1a1a;
+      --text: #f5f1e8;
+      --muted: #9aa0a8;
+      --border: #2a2a2a;
+      --accent: #f5f1e8;
+      --accent-text: #08090b;
+      --danger: #ffb4b4;
+      --danger-soft: #301717;
+      --warning: #ffd98a;
+      --warning-soft: #2d2413;
+      --shadow: 0 30px 80px rgba(0, 0, 0, 0.44);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --background: #08090b;
+    --dot: rgba(255, 255, 255, 0.16);
+    --shell: #111111;
+    --surface: #121212;
+    --surface-subtle: #1a1a1a;
+    --text: #f5f1e8;
+    --muted: #9aa0a8;
+    --border: #2a2a2a;
+    --accent: #f5f1e8;
+    --accent-text: #08090b;
+    --danger: #ffb4b4;
+    --danger-soft: #301717;
+    --warning: #ffd98a;
+    --warning-soft: #2d2413;
+    --shadow: 0 30px 80px rgba(0, 0, 0, 0.44);
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
   }
 
   * {
@@ -21,56 +68,84 @@
 
   body {
     margin: 0;
-    background: var(--background);
+    min-height: 100vh;
+    background-color: var(--background);
+    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+    background-size: 32px 32px;
     color: var(--text);
     font-family: Arial, Helvetica, sans-serif;
     font-size: 14px;
   }
 
   .app-shell {
-    max-width: 1440px;
-    margin: 0 auto;
-    padding: 28px;
+    width: min(1160px, calc(100% - 48px));
+    margin: 7vh auto;
+    padding: 30px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--shell);
+    box-shadow: var(--shadow);
   }
 
   .app-header {
     display: flex;
-    align-items: end;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
+    gap: 18px;
     margin-bottom: 22px;
-    padding-bottom: 16px;
+    padding-bottom: 18px;
     border-bottom: 1px solid var(--border);
   }
 
   .app-header h1 {
-    margin: 0 0 8px;
-    font-size: 30px;
-    line-height: 1.15;
-    font-weight: 700;
+    margin: 0 0 14px;
+    font-size: 38px;
+    line-height: 1.12;
+    font-weight: 800;
+    letter-spacing: 0;
   }
 
   .app-header p {
     margin: 0;
     color: var(--muted);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  .theme-toggle {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-subtle);
+    color: var(--text);
+    font: inherit;
     font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .theme-toggle:hover,
+  .theme-toggle:focus {
+    border-color: var(--accent);
+    outline: none;
   }
 
   .dashboard-grid {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 16px;
+    gap: 12px;
   }
 
   .panel {
     grid-column: span 6;
-    min-height: 120px;
+    min-height: 118px;
     overflow: hidden;
-    padding: 18px;
+    padding: 16px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--surface);
-    box-shadow: var(--shadow);
   }
 
   .panel > div {
@@ -90,16 +165,20 @@
   }
 
   .panel h2 {
-    margin: 0 0 14px;
-    font-size: 16px;
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 12px;
     line-height: 1.3;
-    font-weight: 700;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
   }
 
   table {
     width: 100%;
     min-width: 520px;
     border-collapse: collapse;
+    color: var(--text);
     font-size: 13px;
   }
 
@@ -111,7 +190,7 @@
 
   th,
   td {
-    padding: 9px 10px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border);
     text-align: left;
     vertical-align: middle;
@@ -120,8 +199,9 @@
   th {
     background: var(--surface-subtle);
     color: var(--muted);
-    font-weight: 700;
-    font-size: 12px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
@@ -148,45 +228,61 @@
 
   .filter-grid label {
     display: grid;
-    gap: 4px;
+    gap: 5px;
     color: var(--muted);
     font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   select {
     width: 100%;
-    min-height: 34px;
-    padding: 0 8px;
+    min-height: 38px;
+    padding: 0 10px;
     border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface);
+    border-radius: 9px;
+    background: var(--surface-subtle);
     color: var(--text);
     font: inherit;
   }
 
   .error-view {
+    margin-top: 12px;
     padding: 16px;
-    border: 1px solid #fecaca;
-    border-radius: 8px;
-    background: #fff1f2;
+    border: 1px solid var(--danger);
+    border-radius: 10px;
+    background: var(--danger-soft);
     color: var(--danger);
   }
 
   @media (max-width: 800px) {
     .app-shell {
+      width: min(100% - 28px, 1160px);
+      margin: 18px auto;
       padding: 18px;
+      border-radius: 14px;
+    }
+
+    .app-header h1 {
+      font-size: 27px;
     }
 
     .app-header {
       display: block;
     }
 
-    .app-header h1 {
-      font-size: 24px;
+    .app-header p {
+      font-size: 14px;
+    }
+
+    .theme-toggle {
+      margin-top: 14px;
+      width: 100%;
     }
 
     .dashboard-grid {
-      grid-template-columns: repeat(1, minmax(0, 1fr));
+      grid-template-columns: 1fr;
     }
 
     .panel,
