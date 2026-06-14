@@ -60,6 +60,10 @@ Use this sequence for a clean setup or final verification run:
 
 The solution runs entirely on Google Sheets, Apps Script, HtmlService, and MailApp.
 
+![Architecture diagram](SOP_architecture.png)
+
+*Architecture diagram showing source tabs, Apps Script modules, automation triggers, generated outputs, Web App access control, and the real-time reflection pattern.*
+
 System flow:
 
 ```text
