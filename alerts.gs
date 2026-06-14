@@ -6,26 +6,39 @@
  * @returns {DashboardModel} Dashboard model.
  */
 function buildDashboardModel(data, config) {
-  var runtimeConfig = config || loadConfig();
-  var source = data || loadAllData(runtimeConfig);
+  var runtimeConfig;
+  var source;
 
-  return {
-    kpis: buildKpis_(source, runtimeConfig),
-    lwdAlerts: buildLwdAlerts_(source.employees || [], runtimeConfig),
-    probationAlerts: buildProbationAlerts_(source.employees || [], runtimeConfig),
-    departmentBreakdown: buildDepartmentBreakdown_(source.employees || []),
-    attrition: buildAttritionModel_(source.employees || [], source.offboarded || []),
-    riskSummary: buildRiskSummary_(source.risks || []),
-    orgChart: {
-      managers: buildOrgChartRows(source.employees || [])
-    },
-    drillDownRows: source.employees || [],
-    dataQuality: {
-      schemaWarnings: source.schemaWarnings || [],
-      validationWarnings: source.validationWarnings || []
-    },
-    healthScore: buildHealthScore_(source, runtimeConfig)
-  };
+  try {
+    runtimeConfig = config || loadConfig();
+    source = data || loadAllData(runtimeConfig);
+    var employees = source.employees || [];
+    var lwdAlerts = buildLwdAlerts_(employees, runtimeConfig);
+    var probationAlerts = buildProbationAlerts_(employees, runtimeConfig);
+
+    return {
+      kpis: buildKpis_(source, runtimeConfig),
+      lwdAlerts: lwdAlerts,
+      probationAlerts: probationAlerts,
+      departmentBreakdown: buildDepartmentBreakdown_(employees),
+      attrition: buildAttritionModel_(employees, source.offboarded || []),
+      riskSummary: buildRiskSummary_(source.risks || []),
+      orgChart: {
+        managers: buildOrgChartRows(employees)
+      },
+      drillDownRows: employees,
+      dataQuality: {
+        schemaWarnings: source.schemaWarnings || [],
+        validationWarnings: source.validationWarnings || []
+      },
+      healthScore: buildHealthScore_(source, runtimeConfig, { lwdAlerts: lwdAlerts, probationAlerts: probationAlerts })
+    };
+  } catch (error) {
+    if (typeof logError === "function") {
+      logError("buildDashboardModel failed: " + getSafeErrorMessage_(error));
+    }
+    return createEmptyDashboardModel_(source);
+  }
 }
 
 /**
@@ -178,13 +191,15 @@ function padTwo_(value) {
  * @returns {DashboardModel} Empty dashboard model.
  */
 function createEmptyDashboardModel_(source) {
+  var employees = source && source.employees ? source.employees : [];
+
   return {
     kpis: {
       regionHeadcount: {},
       statusHeadcount: {},
       productivityFlagCount: 0,
       activeRiskCount: 0,
-      totalHeadcount: source && source.employees ? source.employees.length : 0
+      totalHeadcount: employees.length
     },
     lwdAlerts: [],
     probationAlerts: [],
@@ -202,14 +217,19 @@ function createEmptyDashboardModel_(source) {
     orgChart: {
       managers: []
     },
-    drillDownRows: [],
+    drillDownRows: employees,
+    dataQuality: {
+      schemaWarnings: source && source.schemaWarnings ? source.schemaWarnings : [],
+      validationWarnings: source && source.validationWarnings ? source.validationWarnings : []
+    },
     healthScore: {
       score: 100,
+      scale: "0-100",
       components: {
-        attrition: 30,
-        openAlerts: 25,
-        activeRisks: 25,
-        productivityAverage: 20
+        attrition: createHealthComponent_(0, 30, 100),
+        openAlerts: createHealthComponent_(0, 25, 100),
+        activeRisks: createHealthComponent_(0, 25, 100),
+        productivityAverage: createHealthComponent_(100, 20, 100)
       }
     }
   };
@@ -472,12 +492,13 @@ function buildRiskSummary_(risks) {
  *
  * @param {Object} source Normalized source data.
  * @param {Object} config Runtime configuration.
+ * @param {Object=} precomputedAlerts Already-computed alert arrays.
  * @returns {Object} Health score model.
  */
-function buildHealthScore_(source, config) {
+function buildHealthScore_(source, config, precomputedAlerts) {
   var employees = source.employees || [];
   var attrition = buildAttritionModel_(employees, source.offboarded || []);
-  var alerts = {
+  var alerts = precomputedAlerts || {
     lwdAlerts: buildLwdAlerts_(employees, config),
     probationAlerts: buildProbationAlerts_(employees, config)
   };

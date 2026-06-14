@@ -362,7 +362,7 @@ The system is deployed entirely within Google Workspace. The Google Sheet is sha
 |---|---|
 | SEC-OS-01 | The Apps Script project shall not store credentials, API keys, or passwords in source code or in the Sheet. Service account permissions shall be granted at the Workspace level only. |
 | SEC-OS-02 | The Web App deployment shall use HTTPS only (enforced by Google's Apps Script infrastructure). HTTP access is not applicable. |
-| SEC-OS-03 | The system shall detect and log unauthorized access attempts: any request to the Web App that fails Google authentication shall be logged with timestamp and redacted user-agent. |
+| SEC-OS-03 | Requests that fail Google domain authentication are rejected at the infrastructure layer and recorded in Google Workspace Admin audit logs. No additional application-layer logging is required or possible. |
 | SEC-OS-04 | The Techolution reviewer access (aadish.jain@techolution.com) shall be granted as view-only and shall be revocable without affecting system operation. |
 | SEC-OS-05 | Self-monitoring alerts for system failures (missed runs, quota exhaustion, schema drift) shall be sent to the admin email address defined in _Config, separate from the HR alert recipient. |
 

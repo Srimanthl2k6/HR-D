@@ -10,8 +10,10 @@ function runAllTests() {
     testLoadAllDataReadsRelatedSourceTabs_,
     testCurrentMonthColumnDiscovery_,
     testFormulaSanitization_,
+    testEnsureHeaderRowRestoresDeletedHeader_,
     testDashboardModelComputesKpisAndBreakdowns_,
     testDashboardModelBuildsLwdAndProbationAlerts_,
+    testDashboardModelComputesAlertsOnlyOnce_,
     testDashboardModelComputesCurrentQuarterAttritionFromLiveRows_,
     testDashboardModelSummarizesRiskAndHealthScore_,
     testDashboardRendererSurfacesValidationWarnings_,
@@ -213,6 +215,17 @@ function createQaTestDataSet_() {
       exitQuarter: createCurrentQuarterLabelForTest_()
     }
   ];
+  source.risks = [
+    {
+      employeeId: prefix + "-RISK",
+      name: "QA Risk",
+      riskCategory: "Delivery",
+      riskLevel: "High",
+      description: "QA test risk record",
+      dateRaised: createRelativeDayDate_(-30),
+      status: "Open"
+    }
+  ];
 
   return source;
 }
@@ -343,6 +356,24 @@ function testFormulaSanitization_() {
 }
 
 /**
+ * Verifies deleted headers are restored without overwriting row data.
+ *
+ * @returns {void}
+ */
+function testEnsureHeaderRowRestoresDeletedHeader_() {
+  var sheet = createHeaderRowMockSheet_([
+    ["IND-001", "Asha Rao"],
+    ["IND-002", "Dev Shah"]
+  ]);
+
+  ensureHeaderRow_(sheet, ["Emp ID", "Name"]);
+
+  assertEquals("Emp ID", sheet.values[0][0], "Expected header should be inserted at row 1.");
+  assertEquals("IND-001", sheet.values[1][0], "Existing data row should be pushed down to row 2.");
+  assertEquals(1, sheet.insertedRows.length, "Header restoration should insert one row.");
+}
+
+/**
  * Verifies dashboard KPI and department breakdown calculations.
  *
  * @returns {void}
@@ -379,6 +410,37 @@ function testDashboardModelBuildsLwdAndProbationAlerts_() {
   );
   assertEquals(1, model.probationAlerts.length, "One probationer should be confirmation-imminent.");
   assertEquals("PROB-001", model.probationAlerts[0].employeeId, "Probation alert should target the confirmation-imminent employee.");
+}
+
+/**
+ * Verifies alert arrays are reused when building the health score.
+ *
+ * @returns {void}
+ */
+function testDashboardModelComputesAlertsOnlyOnce_() {
+  var originalBuildLwdAlerts = buildLwdAlerts_;
+  var originalBuildProbationAlerts = buildProbationAlerts_;
+  var lwdCalls = 0;
+  var probationCalls = 0;
+
+  buildLwdAlerts_ = function(employees, config) {
+    lwdCalls += 1;
+    return originalBuildLwdAlerts(employees, config);
+  };
+  buildProbationAlerts_ = function(employees, config) {
+    probationCalls += 1;
+    return originalBuildProbationAlerts(employees, config);
+  };
+
+  try {
+    buildDashboardModel(createPass4SourceData_(), getDefaultConfigValues());
+  } finally {
+    buildLwdAlerts_ = originalBuildLwdAlerts;
+    buildProbationAlerts_ = originalBuildProbationAlerts;
+  }
+
+  assertEquals(1, lwdCalls, "LWD alerts should be computed once per dashboard model.");
+  assertEquals(1, probationCalls, "Probation alerts should be computed once per dashboard model.");
 }
 
 /**
@@ -549,7 +611,15 @@ function testTriggerInstallAndRemoveUsesConfiguredHour_() {
 function testAlertDigestSendsOnlyWhenActive_() {
   var originalMailApp = typeof MailApp === "undefined" ? undefined : MailApp;
   var mockMailApp = createMockMailApp_(false);
-  var alertModel = evaluateAlerts(createPass4SourceData_(), getDefaultConfigValues());
+  var source = createPass4SourceData_();
+  source.finance = [
+    {
+      employeeId: "PROB-001",
+      ctcInrAnnual: 1234567,
+      productivityAverage: 88
+    }
+  ];
+  var alertModel = evaluateAlerts(source, getDefaultConfigValues());
 
   MailApp = mockMailApp;
   try {
@@ -560,7 +630,7 @@ function testAlertDigestSendsOnlyWhenActive_() {
     assertEquals(false, notSent.sent, "No digest should be sent when there are no active alerts.");
     assertEquals(1, mockMailApp.sent.length, "Only one digest email should be sent.");
     assertTrue(mockMailApp.sent[0].body.indexOf("PROB-001") !== -1, "Digest should include alert employee IDs.");
-    assertTrue(mockMailApp.sent[0].body.indexOf("CTC") === -1, "Digest should not include compensation labels.");
+    assertTrue(mockMailApp.sent[0].body.indexOf("1234567") === -1, "Digest body must not contain the employee CTC value.");
   } finally {
     restoreGlobal_("MailApp", originalMailApp);
   }
@@ -807,6 +877,8 @@ function testQaTestDataHelpersUseUniqueTestIdsOnly_() {
     return employee.employeeId;
   }).concat(data.offboarded.map(function(row) {
     return row.employeeId;
+  })).concat(data.risks.map(function(row) {
+    return row.employeeId;
   }));
 
   assertTrue(ids.length >= 4, "QA helper data should include enough rows for acceptance scenarios.");
@@ -980,6 +1052,53 @@ function createTestRange_(sheetName, a1) {
         getName: function() {
           return sheetName;
         }
+      };
+    }
+  };
+}
+
+/**
+ * Creates a sheet test double for header-row restoration tests.
+ *
+ * @param {Array[]} values Initial sheet values.
+ * @returns {Object} Sheet-like object.
+ */
+function createHeaderRowMockSheet_(values) {
+  return {
+    values: values.map(function(row) {
+      return row.slice();
+    }),
+    insertedRows: [],
+    getDataRange: function() {
+      var self = this;
+      return {
+        getValues: function() {
+          return self.values.map(function(row) {
+            return row.slice();
+          });
+        }
+      };
+    },
+    insertRowBefore: function(rowNumber) {
+      this.insertedRows.push(rowNumber);
+      this.values.splice(rowNumber - 1, 0, []);
+    },
+    getRange: function(row, column, rowCount, columnCount) {
+      var self = this;
+      return {
+        setValues: function(rows) {
+          rows.forEach(function(sourceRow, rowIndex) {
+            var targetRow = row + rowIndex - 1;
+            while (self.values.length <= targetRow) {
+              self.values.push([]);
+            }
+            sourceRow.forEach(function(value, columnIndex) {
+              self.values[targetRow][column + columnIndex - 1] = value;
+            });
+          });
+        },
+        setFontWeight: function() {},
+        setBackground: function() {}
       };
     }
   };

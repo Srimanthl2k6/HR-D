@@ -181,13 +181,17 @@ function ensureHeaderRow_(sheet, headers) {
   }
 
   var firstRowValues = getSheetValues_(sheet)[0] || [];
-  var hasAnyHeader = firstRowValues.some(function(value) {
-    return String(value || "").trim() !== "";
-  });
+  var firstCellValue = String(firstRowValues[0] || "").trim().toLowerCase();
+  var expectedFirstHeader = String(headers[0] || "").trim().toLowerCase();
 
-  if (!hasAnyHeader) {
+  if (firstCellValue !== expectedFirstHeader) {
+    if (sheet.insertRowBefore) {
+      sheet.insertRowBefore(1);
+    }
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    formatHeaderRow_(sheet, headers.length);
+    if (typeof formatHeaderRow_ === "function") {
+      formatHeaderRow_(sheet, headers.length);
+    }
   }
 }
 

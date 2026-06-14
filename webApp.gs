@@ -1,6 +1,12 @@
 /**
  * Serves the HtmlService web application.
  *
+ * SEC-OS-03 NOTE: Unauthenticated requests never reach this function - they are
+ * rejected by Google's infrastructure before Apps Script executes, because this
+ * app is deployed with "access": "DOMAIN". Authentication failure logging is
+ * therefore handled by Google Workspace Admin audit logs, not application code.
+ * See: https://workspace.google.com/audit-logs
+ *
  * @param {Object=} event Apps Script GET event.
  * @returns {Object} HtmlService output or local fallback object.
  */
@@ -42,7 +48,7 @@ function include(filename) {
 /**
  * Returns dashboard data for the Web App.
  *
- * @returns {DashboardModel} Dashboard model.
+ * @returns {Object} Web App dashboard payload with shape { ok, appName, generatedAt, sections, model, filters, status }.
  */
 function getDashboardData() {
   try {
