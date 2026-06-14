@@ -180,7 +180,7 @@ Config keys:
 - `PROBATION_ALERT_DAYS`: days before confirmation date to show a probation alert.
 - `PROBATION_DURATION_DAYS`: days after DOJ used to compute confirmation date.
 - `PRODUCTIVITY_TARGET`: productivity score below which an employee is flagged.
-- `HR_DIGEST_EMAIL`: alert digest recipient.
+- `HR_ALERT_EMAIL`: alert digest recipient.
 - `ADMIN_ALERT_EMAIL`: self-monitoring alert recipient.
 - `PIPELINE_TRIGGER_HOUR`: daily trigger hour.
 - `EMPLOYEE_ID_PATTERN`: validation regex for employee IDs.
@@ -476,7 +476,7 @@ Use this symptom-to-resolution guide during review or support.
 
 - Symptom: Email digest does not send.
   Cause: no active alerts, missing digest recipient, or MailApp quota/failure.
-  Resolution: confirm active alerts exist, verify `HR_DIGEST_EMAIL`, check MailApp quota, and review `Logs`.
+  Resolution: confirm active alerts exist, verify `HR_ALERT_EMAIL`, check MailApp quota, and review `Logs`.
 
 - Symptom: Manual edits to generated tabs disappear.
   Cause: generated tabs are rewritten by script.
